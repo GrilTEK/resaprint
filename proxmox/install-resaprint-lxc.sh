@@ -86,7 +86,7 @@ log "Using storage pool: $STORAGE"
 log "Refreshing template list..."
 pveam update >/dev/null 2>&1 || true
 
-TEMPLATE="$(pveam available --section system | awk -v p="$TEMPLATE_PATTERN" '$0 ~ p {print $2}' | sort -V | tail -1)"
+TEMPLATE="$(pveam available --section system | awk -v p="$TEMPLATE_PATTERN" '$0 ~ p {print $2}' | sort -V | tail -1 || true)"
 if [[ -z "$TEMPLATE" ]]; then
   err "Could not find a template matching '$TEMPLATE_PATTERN'. Run 'pveam available' to see options and set TEMPLATE_PATTERN."
   exit 1
@@ -114,16 +114,48 @@ pct create "$CTID" "${TEMPLATE_STORAGE}:vztmpl/${TEMPLATE}" \
 log "Starting container..."
 pct start "$CTID"
 
-log "Waiting for network..."
+# Two-stage wait, each with its own clear failure message (a bare
+# `set -e`-triggered exit here would otherwise die silently, e.g. via
+# CTIP=$(... | ...) failing under pipefail with no visible error).
+log "Waiting for the container to get an IP address (local network)..."
+CTIP=""
 for _ in $(seq 1 30); do
-  if pct exec "$CTID" -- getent hosts github.com >/dev/null 2>&1; then
+  CTIP="$(pct exec "$CTID" -- sh -c "ip -4 -o addr show dev eth0 2>/dev/null | awk '{print \$4}' | cut -d/ -f1" 2>/dev/null || true)"
+  if [[ -n "$CTIP" ]]; then
     break
   fi
   sleep 2
 done
 
-CTIP="$(pct exec "$CTID" -- hostname -I | awk '{print $1}')"
-log "Container network IP: ${CTIP:-unknown}"
+if [[ -z "$CTIP" ]]; then
+  err "Container $CTID never got an IP address on eth0 after 60s."
+  err "Check that BRIDGE=$BRIDGE matches an existing bridge on this host (ip link show),"
+  err "that a DHCP server is reachable on that network, or set a static address, e.g.:"
+  err "  IP_CONFIG=\"10.0.0.50/24,gw=10.0.0.1\" bash -c \"\$(curl -fsSL .../install-resaprint-lxc.sh)\""
+  err "The container itself was created (CTID $CTID) — fix networking and either"
+  err "'pct start $CTID' + re-run manually from here, or 'pct destroy $CTID' and retry."
+  exit 1
+fi
+log "Container network IP: $CTIP"
+
+log "Waiting for internet/DNS access from inside the container..."
+NET_OK=0
+for _ in $(seq 1 30); do
+  if pct exec "$CTID" -- getent hosts github.com >/dev/null 2>&1; then
+    NET_OK=1
+    break
+  fi
+  sleep 2
+done
+
+if [[ "$NET_OK" -ne 1 ]]; then
+  err "Container $CTID has a local IP ($CTIP) but can't resolve github.com after 60s."
+  err "Check DNS/gateway/firewall for this container's network segment, then either"
+  err "re-run this script (it will reuse nothing and fail at 'already exists' — destroy"
+  err "the container first) or fix networking and continue manually inside the container:"
+  err "  pct exec $CTID -- bash"
+  exit 1
+fi
 
 # ---------- base packages ----------
 # The debian-12-standard template ships without curl/git — install
