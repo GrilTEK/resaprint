@@ -34,11 +34,14 @@ jobs:
           -p:IncludeNativeLibrariesForSelfExtract=true
           -o out\agent
 
-      - name: Publish ResaPrint.Tray (self-contained, single-file, trimmed)
+      - name: Publish ResaPrint.Tray (self-contained, single-file)
+        # No PublishTrimmed here: Windows Forms does not support IL
+        # trimming (NETSDK1175) — the Tray app is small anyway, so the
+        # untrimmed self-contained size is an acceptable tradeoff.
         run: >
           dotnet publish ResaPrint.Tray\ResaPrint.Tray.csproj
           -c Release -r win-x64 --self-contained true
-          -p:PublishSingleFile=true -p:PublishTrimmed=true
+          -p:PublishSingleFile=true
           -p:IncludeNativeLibrariesForSelfExtract=true
           -o out\tray
 
