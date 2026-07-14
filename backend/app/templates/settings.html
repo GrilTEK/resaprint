@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Settings — ResaPrint{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+
+<div class="card">
+  <h2>IMAP (incoming reservation mailbox)</h2>
+  {% if saved %}<p style="color: var(--accent);">Saved.</p>{% endif %}
+  <form hx-post="/settings" hx-target="body">
+    <div class="form-row">
+      <label>Host</label>
+      <input type="text" name="imap_host" value="{{ config.imap_host or '' }}" placeholder="imap.example.com">
+    </div>
+    <div class="form-row">
+      <label>Port</label>
+      <input type="number" name="imap_port" value="{{ config.imap_port }}">
+    </div>
+    <div class="form-row">
+      <label>Username</label>
+      <input type="text" name="imap_user" value="{{ config.imap_user or '' }}">
+    </div>
+    <div class="form-row">
+      <label>Password {% if config.imap_has_password %}(set — leave blank to keep it){% else %}(not set){% endif %}</label>
+      <input type="password" name="imap_password" placeholder="{% if config.imap_has_password %}••••••••{% else %}(none)  {% endif %}">
+    </div>
+    <div class="form-row">
+      <label>Folder (single shared folder for all channels)</label>
+      <input type="text" name="imap_folder" value="{{ config.imap_folder }}">
+    </div>
+    <div class="form-row">
+      <label>Processed folder</label>
+      <input type="text" name="imap_processed_folder" value="{{ config.imap_processed_folder }}">
+    </div>
+    <div class="form-row">
+      <label>Poll interval (seconds)</label>
+      <input type="number" name="imap_poll_seconds" value="{{ config.imap_poll_seconds }}">
+    </div>
+    <button type="submit">Save</button>
+  </form>
+  <p style="color: #666; font-size: 0.85rem;">
+    Changes take effect on the ingest-worker's next poll cycle — no restart needed.
+    The password is encrypted at rest and never shown back once set.
+  </p>
+</div>
+{% endblock %}

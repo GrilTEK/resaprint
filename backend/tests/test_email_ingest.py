@@ -8,9 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.audit_log import AuditLog
 from app.models.reservation import Reservation
 from app.services import email_ingest
-from app.services.email_ingest import FetchedEmail, _decode_subject, _extract_body, _process_email
+from app.services.email_ingest import FetchedEmail, ImapConnectionInfo, _decode_subject, _extract_body, _process_email
 from app.services.parser_registry import ParserRegistry
 from app.services.parsers.reference_booking_com import ReferenceBookingComParser
+
+TEST_CONN_INFO = ImapConnectionInfo(
+    host="imap.example.com", port=993, user="user", password="pw", folder="INBOX", processed_folder="Processed"
+)
 
 
 def test_decode_subject_plain_ascii():
@@ -39,13 +43,15 @@ MATCHING_BODY = (
 @pytest.mark.asyncio
 async def test_process_email_creates_reservation_and_marks_processed(db_session: AsyncSession, monkeypatch):
     calls = []
-    monkeypatch.setattr(email_ingest, "_mark_processed_sync", lambda uid: calls.append(("processed", uid)))
-    monkeypatch.setattr(email_ingest, "_mark_seen_sync", lambda uid: calls.append(("seen", uid)))
+    monkeypatch.setattr(
+        email_ingest, "_mark_processed_sync", lambda conn, uid: calls.append(("processed", uid))
+    )
+    monkeypatch.setattr(email_ingest, "_mark_seen_sync", lambda conn, uid: calls.append(("seen", uid)))
 
     registry = ParserRegistry([ReferenceBookingComParser()])
     fetched = FetchedEmail(uid=b"1", subject=MATCHING_SUBJECT, body=MATCHING_BODY, content_type="text/plain")
 
-    await _process_email(db_session, registry, fetched)
+    await _process_email(db_session, registry, fetched, TEST_CONN_INFO)
 
     result = await db_session.execute(select(Reservation))
     reservations = result.scalars().all()
@@ -58,13 +64,15 @@ async def test_process_email_creates_reservation_and_marks_processed(db_session:
 @pytest.mark.asyncio
 async def test_process_email_logs_unparsed_when_no_parser_matches(db_session: AsyncSession, monkeypatch):
     calls = []
-    monkeypatch.setattr(email_ingest, "_mark_processed_sync", lambda uid: calls.append(("processed", uid)))
-    monkeypatch.setattr(email_ingest, "_mark_seen_sync", lambda uid: calls.append(("seen", uid)))
+    monkeypatch.setattr(
+        email_ingest, "_mark_processed_sync", lambda conn, uid: calls.append(("processed", uid))
+    )
+    monkeypatch.setattr(email_ingest, "_mark_seen_sync", lambda conn, uid: calls.append(("seen", uid)))
 
     registry = ParserRegistry([ReferenceBookingComParser()])
     fetched = FetchedEmail(uid=b"2", subject="Unrelated newsletter", body="nothing useful here", content_type="text/plain")
 
-    await _process_email(db_session, registry, fetched)
+    await _process_email(db_session, registry, fetched, TEST_CONN_INFO)
 
     result = await db_session.execute(select(Reservation))
     assert result.scalars().all() == []
@@ -79,16 +87,41 @@ async def test_process_email_logs_unparsed_when_no_parser_matches(db_session: As
 @pytest.mark.asyncio
 async def test_process_email_logs_unparsed_when_required_field_missing(db_session: AsyncSession, monkeypatch):
     calls = []
-    monkeypatch.setattr(email_ingest, "_mark_processed_sync", lambda uid: calls.append(("processed", uid)))
-    monkeypatch.setattr(email_ingest, "_mark_seen_sync", lambda uid: calls.append(("seen", uid)))
+    monkeypatch.setattr(
+        email_ingest, "_mark_processed_sync", lambda conn, uid: calls.append(("processed", uid))
+    )
+    monkeypatch.setattr(email_ingest, "_mark_seen_sync", lambda conn, uid: calls.append(("seen", uid)))
 
     registry = ParserRegistry([ReferenceBookingComParser()])
     fetched = FetchedEmail(
         uid=b"3", subject=MATCHING_SUBJECT, body="Guest name: Missing dates\n", content_type="text/plain"
     )
 
-    await _process_email(db_session, registry, fetched)
+    await _process_email(db_session, registry, fetched, TEST_CONN_INFO)
 
     result = await db_session.execute(select(Reservation))
     assert result.scalars().all() == []
     assert calls == [("seen", b"3")]
+
+
+@pytest.mark.asyncio
+async def test_load_imap_connection_info_returns_none_when_unconfigured(db_session: AsyncSession):
+    conn_info = await email_ingest.load_imap_connection_info(db_session)
+    assert conn_info is None
+
+
+@pytest.mark.asyncio
+async def test_load_imap_connection_info_decrypts_password_from_db(db_session: AsyncSession):
+    from app.services.app_settings import get_or_create_settings
+    from app.services.crypto import encrypt
+
+    row = await get_or_create_settings(db_session)
+    row.imap_host = "imap.example.com"
+    row.imap_user = "reservations@example.com"
+    row.imap_password_encrypted = encrypt("s3cret")
+    await db_session.commit()
+
+    conn_info = await email_ingest.load_imap_connection_info(db_session)
+    assert conn_info is not None
+    assert conn_info.host == "imap.example.com"
+    assert conn_info.password == "s3cret"

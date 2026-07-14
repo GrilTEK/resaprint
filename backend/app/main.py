@@ -7,6 +7,7 @@ from app.routers import (
     admin_ui,
     audit_log,
     auth,
+    config,
     health,
     parsers,
     print_jobs,
@@ -31,4 +32,5 @@ app.include_router(print_jobs.router)
 app.include_router(stations.router)
 app.include_router(parsers.router)
 app.include_router(audit_log.router)
+app.include_router(config.router)
 app.include_router(admin_ui.router)

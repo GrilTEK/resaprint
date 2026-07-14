@@ -24,9 +24,9 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/GrilTEK/resaprint/main/p
 This creates a new unprivileged Debian 12 LXC (`nesting=1,keyctl=1` so
 Docker works inside it), installs Docker, clones this repo, generates a
 random `SECRET_KEY` and `POSTGRES_PASSWORD`, and runs
-`docker compose up -d --build`. `IMAP_*` is left blank in the generated
-`.env` — the script prints the exact commands to fill those in and
-restart, plus how to create the first admin PIN, at the end of its run.
+`docker compose up -d --build`. IMAP is left unconfigured — set it from
+the admin UI's **Settings** page (see below) once you've logged in, no
+`.env` editing or restart needed.
 
 Override any default (container ID, storage pool, network bridge,
 static IP, resources) via environment variables — see the top of
@@ -116,13 +116,26 @@ through a shell.
 
 ## IMAP setup
 
-Point `IMAP_*` at a dedicated mailbox (not a personal inbox) that
-receives reservation confirmation emails from your OTAs/channel
-manager. All channels are expected to land in a single folder
-(`IMAP_FOLDER`, default `INBOX`) — the parser registry routes each
-email to the right parser by matching its subject (and optionally
-body), not by folder. If your setup delivers different channels to
-different folders today, forward/rule them into one shared folder.
+Configure IMAP from the admin UI's **Settings** page
+(`/settings`) — host, port, username, password, folder, processed
+folder, and poll interval are all editable there and take effect on
+the `ingest-worker`'s next poll cycle, no restart needed. The password
+is encrypted at rest (Fernet, keyed from `SECRET_KEY`) and the admin
+UI never displays it back once set (only whether one is configured).
+
+`IMAP_*` in `backend/.env` still exists and seeds the DB-backed
+settings the first time they're read (useful for scripted/non-GUI
+deployments), but after that first read the DB row is authoritative —
+editing `.env` afterward has no effect. Use the Settings page or
+`PATCH /api/v1/config` going forward.
+
+Point IMAP at a dedicated mailbox (not a personal inbox) that receives
+reservation confirmation emails from your OTAs/channel manager. All
+channels are expected to land in a single folder (default `INBOX`) —
+the parser registry routes each email to the right parser by matching
+its subject (and optionally body), not by folder. If your setup
+delivers different channels to different folders today, forward/rule
+them into one shared folder.
 
 ## Parser field-mapping guide
 

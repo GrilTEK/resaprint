@@ -66,6 +66,13 @@ both wrong-PIN and locked-PIN cases to avoid leaking lockout state.
 | PATCH / DELETE | `/api/v1/parsers/{id}/fields/{field_id}` | admin | |
 | POST | `/api/v1/parsers/{id}/test` | admin | Dry-run parse of pasted sample text — does not persist anything |
 
+## Config (IMAP settings)
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/api/v1/config` | admin | Returns IMAP host/port/user/folders/poll interval and `imap_has_password` (bool) — the password itself is never returned |
+| PATCH | `/api/v1/config` | admin | Partial update; `imap_password` is write-only — omit or send blank to leave the existing password unchanged. Encrypted at rest (Fernet, keyed from `SECRET_KEY`). Row is seeded from `backend/.env`'s `IMAP_*` on first access, then the DB is authoritative |
+
 ## Audit log
 
 | Method | Path | Auth | Notes |
@@ -83,7 +90,7 @@ both wrong-PIN and locked-PIN cases to avoid leaking lockout state.
 
 `/login`, `/` (dashboard), `/reservations`, `/reservations/{id}`,
 `/print-jobs` (+ `/print-jobs/table` HTMX partial), `/stations`,
-`/parsers` (+ `/parsers/{id}`), `/audit-log`. These use the same
+`/parsers` (+ `/parsers/{id}`), `/audit-log`, `/settings`. These use the same
 underlying data as the JSON API but return HTML, and some accept
 form-encoded POSTs directly (e.g. `/reservations/{id}/print`,
 `/stations`, `/parsers/{id}/test`) for HTMX interactions rather than

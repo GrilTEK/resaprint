@@ -1,4 +1,5 @@
 from app.models.admin_pin import AdminPin
+from app.models.app_settings import AppSettings
 from app.models.audit_log import AuditLog
 from app.models.parser_mapping import (
     ExtractionType,
@@ -12,6 +13,7 @@ from app.models.reservation import Reservation, ReservationStatus
 
 __all__ = [
     "AdminPin",
+    "AppSettings",
     "AuditLog",
     "ExtractionType",
     "FieldTransform",

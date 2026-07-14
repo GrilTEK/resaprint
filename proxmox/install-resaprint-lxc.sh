@@ -228,19 +228,19 @@ cat <<EOF
 
  Still to do:
 
- 1. Edit IMAP settings (mailbox for incoming reservation emails):
-      pct exec $CTID -- nano /opt/resaprint/backend/.env
-    then restart the affected services:
-      pct exec $CTID -- bash -c "cd /opt/resaprint && docker compose up -d --build ingest-worker api"
-
- 2. Point Nginx Proxy Manager at ${CTIP:-<container-ip>}:8000 with TLS
-    (not managed by this script or the repo). Once that's live, make
-    sure SESSION_COOKIE_SECURE=true in backend/.env (see above).
-
- 3. Create the first admin PIN (one step, no shell/psql relay — a
+ 1. Create the first admin PIN (one step, no shell/psql relay — a
     bcrypt hash contains \$ characters that get silently mangled if
     you hash and INSERT as two separate manual bash steps):
       pct exec $CTID -- bash -c "cd /opt/resaprint && docker compose exec api python scripts/create_admin_pin.py --label Recepcija --pin 1234"
+
+ 2. Log in at http://${CTIP:-<container-ip>}:8000/login with that PIN,
+    then configure IMAP (the mailbox for incoming reservation emails)
+    from the Settings page — no .env editing or restart needed, it
+    takes effect on the ingest-worker's next poll.
+
+ 3. Point Nginx Proxy Manager at ${CTIP:-<container-ip>}:8000 with TLS
+    (not managed by this script or the repo). Once that's live, make
+    sure SESSION_COOKIE_SECURE=true in backend/.env (see above).
 
  Full docs: https://github.com/GrilTEK/resaprint/blob/main/docs/BACKEND.md
 ============================================================

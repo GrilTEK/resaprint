@@ -7,6 +7,12 @@ each to the parser registry, and either creates a Reservation (moving
 the message to the processed folder) or logs an `email.unparsed` audit
 entry (leaving the message in place, marked \\Seen so it isn't
 reprocessed every poll).
+
+Connection settings (host/user/password/folders/poll interval) are
+read from the AppSettings DB row (editable from the admin UI's
+Settings page, seeded from backend/.env on first access) rather than
+static config — so changing them takes effect on the next poll with no
+restart needed.
 """
 from __future__ import annotations
 
@@ -17,16 +23,32 @@ import logging
 from dataclasses import dataclass
 from email.message import Message
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.config import settings
 from app.db import async_session_maker
+from app.models.parser_mapping import ParserFieldMapping
 from app.models.reservation import Reservation, ReservationStatus
 from app.services import audit
-from app.services.parser_registry import ParserError, ParserRegistry
+from app.services.app_settings import get_or_create_settings
+from app.services.crypto import decrypt
+from app.services.parser_registry import GenericFieldMappingParser, ParserError, ParserRegistry
 from app.services.parsers.reference_booking_com import ReferenceBookingComParser
 
 logger = logging.getLogger("resaprint.email_ingest")
+
+DEFAULT_POLL_SECONDS = 60
+
+
+@dataclass
+class ImapConnectionInfo:
+    host: str
+    port: int
+    user: str
+    password: str
+    folder: str
+    processed_folder: str
 
 
 @dataclass
@@ -35,6 +57,20 @@ class FetchedEmail:
     subject: str
     body: str
     content_type: str
+
+
+async def load_imap_connection_info(db: AsyncSession) -> ImapConnectionInfo | None:
+    row = await get_or_create_settings(db)
+    if not row.imap_host or not row.imap_user or not row.imap_password_encrypted:
+        return None
+    return ImapConnectionInfo(
+        host=row.imap_host,
+        port=row.imap_port,
+        user=row.imap_user,
+        password=decrypt(row.imap_password_encrypted),
+        folder=row.imap_folder,
+        processed_folder=row.imap_processed_folder,
+    )
 
 
 def _decode_subject(msg: Message) -> str:
@@ -71,11 +107,11 @@ def _extract_body(msg: Message) -> tuple[str, str]:
     return payload.decode(charset, errors="replace"), msg.get_content_type()
 
 
-def _fetch_unseen_sync() -> list[FetchedEmail]:
-    conn = imaplib.IMAP4_SSL(settings.imap_host, settings.imap_port)
+def _fetch_unseen_sync(conn_info: ImapConnectionInfo) -> list[FetchedEmail]:
+    conn = imaplib.IMAP4_SSL(conn_info.host, conn_info.port)
     try:
-        conn.login(settings.imap_user, settings.imap_password)
-        conn.select(settings.imap_folder)
+        conn.login(conn_info.user, conn_info.password)
+        conn.select(conn_info.folder)
 
         status, data = conn.search(None, "UNSEEN")
         if status != "OK":
@@ -99,13 +135,13 @@ def _fetch_unseen_sync() -> list[FetchedEmail]:
             pass
 
 
-def _mark_processed_sync(uid: bytes) -> None:
-    conn = imaplib.IMAP4_SSL(settings.imap_host, settings.imap_port)
+def _mark_processed_sync(conn_info: ImapConnectionInfo, uid: bytes) -> None:
+    conn = imaplib.IMAP4_SSL(conn_info.host, conn_info.port)
     try:
-        conn.login(settings.imap_user, settings.imap_password)
-        conn.select(settings.imap_folder)
+        conn.login(conn_info.user, conn_info.password)
+        conn.select(conn_info.folder)
         conn.store(uid, "+FLAGS", "\\Seen")
-        conn.copy(uid, settings.imap_processed_folder)
+        conn.copy(uid, conn_info.processed_folder)
         conn.store(uid, "+FLAGS", "\\Deleted")
         conn.expunge()
     finally:
@@ -115,11 +151,11 @@ def _mark_processed_sync(uid: bytes) -> None:
             pass
 
 
-def _mark_seen_sync(uid: bytes) -> None:
-    conn = imaplib.IMAP4_SSL(settings.imap_host, settings.imap_port)
+def _mark_seen_sync(conn_info: ImapConnectionInfo, uid: bytes) -> None:
+    conn = imaplib.IMAP4_SSL(conn_info.host, conn_info.port)
     try:
-        conn.login(settings.imap_user, settings.imap_password)
-        conn.select(settings.imap_folder)
+        conn.login(conn_info.user, conn_info.password)
+        conn.select(conn_info.folder)
         conn.store(uid, "+FLAGS", "\\Seen")
     finally:
         try:
@@ -133,12 +169,6 @@ def build_registry() -> ParserRegistry:
 
 
 async def load_registry(db: AsyncSession) -> ParserRegistry:
-    from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
-
-    from app.models.parser_mapping import ParserFieldMapping
-    from app.services.parser_registry import GenericFieldMappingParser
-
     registry = build_registry()
     result = await db.execute(
         select(ParserFieldMapping)
@@ -150,7 +180,9 @@ async def load_registry(db: AsyncSession) -> ParserRegistry:
     return registry
 
 
-async def _process_email(db: AsyncSession, registry: ParserRegistry, fetched: FetchedEmail) -> None:
+async def _process_email(
+    db: AsyncSession, registry: ParserRegistry, fetched: FetchedEmail, conn_info: ImapConnectionInfo
+) -> None:
     parser = registry.find(fetched.subject, fetched.body, fetched.content_type)
 
     if parser is None:
@@ -162,7 +194,7 @@ async def _process_email(db: AsyncSession, registry: ParserRegistry, fetched: Fe
         )
         await db.commit()
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, _mark_seen_sync, fetched.uid)
+        await loop.run_in_executor(None, _mark_seen_sync, conn_info, fetched.uid)
         return
 
     try:
@@ -176,7 +208,7 @@ async def _process_email(db: AsyncSession, registry: ParserRegistry, fetched: Fe
         )
         await db.commit()
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, _mark_seen_sync, fetched.uid)
+        await loop.run_in_executor(None, _mark_seen_sync, conn_info, fetched.uid)
         return
 
     reservation = Reservation(
@@ -199,24 +231,34 @@ async def _process_email(db: AsyncSession, registry: ParserRegistry, fetched: Fe
     await db.commit()
 
     loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, _mark_processed_sync, fetched.uid)
+    await loop.run_in_executor(None, _mark_processed_sync, conn_info, fetched.uid)
 
 
 async def poll_once() -> int:
-    loop = asyncio.get_running_loop()
-    emails = await loop.run_in_executor(None, _fetch_unseen_sync)
-    if not emails:
-        return 0
-
     async with async_session_maker() as db:
+        conn_info = await load_imap_connection_info(db)
+        if conn_info is None:
+            return 0
+
+        loop = asyncio.get_running_loop()
+        emails = await loop.run_in_executor(None, _fetch_unseen_sync, conn_info)
+        if not emails:
+            return 0
+
         registry = await load_registry(db)
         for fetched in emails:
             try:
-                await _process_email(db, registry, fetched)
+                await _process_email(db, registry, fetched, conn_info)
             except Exception:
                 logger.exception("failed to process email uid=%s", fetched.uid)
 
-    return len(emails)
+        return len(emails)
+
+
+async def _current_poll_interval_seconds() -> int:
+    async with async_session_maker() as db:
+        row = await get_or_create_settings(db)
+        return row.imap_poll_seconds or DEFAULT_POLL_SECONDS
 
 
 async def email_poll_loop() -> None:
@@ -227,4 +269,11 @@ async def email_poll_loop() -> None:
                 logger.info("processed %d email(s)", count)
         except Exception:
             logger.exception("email poll iteration failed")
-        await asyncio.sleep(settings.imap_poll_seconds)
+
+        try:
+            interval = await _current_poll_interval_seconds()
+        except Exception:
+            logger.exception("failed to read poll interval, falling back to default")
+            interval = DEFAULT_POLL_SECONDS
+
+        await asyncio.sleep(interval)

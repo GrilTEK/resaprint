@@ -20,12 +20,27 @@ from app.models.parser_mapping import (
 from app.models.print_job import PrintJob
 from app.models.print_station import PrintStation, StationConnectionType
 from app.models.reservation import Reservation
+from app.schemas.config import ConfigOut
 from app.schemas.parser import PARSED_RESERVATION_FIELDS
 from app.services import audit, printing
+from app.services.app_settings import get_or_create_settings
+from app.services.crypto import encrypt
 from app.services.parser_registry import GenericFieldMappingParser
 
 router = APIRouter(tags=["admin-ui"])
 templates = Jinja2Templates(directory="app/templates")
+
+
+def _config_out(row) -> ConfigOut:
+    return ConfigOut(
+        imap_host=row.imap_host,
+        imap_port=row.imap_port,
+        imap_user=row.imap_user,
+        imap_has_password=bool(row.imap_password_encrypted),
+        imap_folder=row.imap_folder,
+        imap_processed_folder=row.imap_processed_folder,
+        imap_poll_seconds=row.imap_poll_seconds,
+    )
 _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
@@ -314,3 +329,43 @@ async def audit_log_page(
 ):
     entries = (await db.execute(select(AuditLog).order_by(AuditLog.created_at.desc()).limit(500))).scalars().all()
     return templates.TemplateResponse(request, "audit_log/list.html", {"admin": admin, "entries": entries})
+
+
+@router.get("/settings")
+async def settings_page(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_session_html),
+):
+    row = await get_or_create_settings(db)
+    return templates.TemplateResponse(request, "settings.html", {"admin": admin, "config": _config_out(row), "saved": False})
+
+
+@router.post("/settings")
+async def settings_update_action(
+    request: Request,
+    imap_host: str = Form(default=""),
+    imap_port: int = Form(default=993),
+    imap_user: str = Form(default=""),
+    imap_password: str = Form(default=""),
+    imap_folder: str = Form(default="INBOX"),
+    imap_processed_folder: str = Form(default="Processed"),
+    imap_poll_seconds: int = Form(default=60),
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_session_html),
+):
+    row = await get_or_create_settings(db)
+    row.imap_host = imap_host or None
+    row.imap_port = imap_port
+    row.imap_user = imap_user or None
+    row.imap_folder = imap_folder
+    row.imap_processed_folder = imap_processed_folder
+    row.imap_poll_seconds = imap_poll_seconds
+    if imap_password:
+        row.imap_password_encrypted = encrypt(imap_password)
+
+    await audit.log(db, actor=admin.label, action="config.updated", entity_type="app_settings", entity_id=row.id)
+    await db.commit()
+    await db.refresh(row)
+
+    return templates.TemplateResponse(request, "settings.html", {"admin": admin, "config": _config_out(row), "saved": True})
