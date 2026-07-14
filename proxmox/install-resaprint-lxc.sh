@@ -2,14 +2,10 @@
 #
 # One-command ResaPrint installer for Proxmox VE.
 #
-# griltek/resaprint is a PRIVATE repo, so both fetching this script via
-# raw.githubusercontent.com and the `git clone` this script performs
-# need a GitHub token with at least read access to the repo. Create a
-# fine-grained PAT (Contents: Read-only) at
-# https://github.com/settings/tokens?type=beta, then run this ON THE
-# PROXMOX HOST as root:
+# griltek/resaprint is a public repo, so no token is needed. Run this
+# ON THE PROXMOX HOST as root:
 #
-#   GH_TOKEN="<your token>" bash -c "$(curl -fsSL -H "Authorization: token $GH_TOKEN" https://raw.githubusercontent.com/GrilTEK/resaprint/main/proxmox/install-resaprint-lxc.sh)"
+#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/GrilTEK/resaprint/main/proxmox/install-resaprint-lxc.sh)"
 #
 # It creates a new unprivileged Debian 12 LXC container, installs Docker
 # inside it, clones this repo, generates a secure .env (SECRET_KEY and
@@ -18,7 +14,11 @@
 # `docker compose up -d --build`.
 #
 # Override any default by exporting the variable before running, e.g.:
-#   GH_TOKEN=... CTID=150 MEMORY_MB=4096 bash -c "$(curl -fsSL -H "Authorization: token $GH_TOKEN" .../install-resaprint-lxc.sh)"
+#   CTID=150 MEMORY_MB=4096 bash -c "$(curl -fsSL .../install-resaprint-lxc.sh)"
+#
+# If the repo is ever made private again, set GH_TOKEN (a fine-grained
+# PAT with Contents: Read-only) and pass it as an Authorization header
+# to the outer curl too — see docs/BACKEND.md.
 #
 # This script does NOT configure Nginx Proxy Manager or create the first
 # admin PIN — both are one-off manual steps printed at the end (also
@@ -44,17 +44,12 @@ GH_TOKEN="${GH_TOKEN:-}"
 log() { echo -e "\033[1;32m[resaprint]\033[0m $*"; }
 err() { echo -e "\033[1;31m[resaprint]\033[0m $*" >&2; }
 
-if [[ -z "$GH_TOKEN" ]]; then
-  err "GH_TOKEN is not set. griltek/resaprint is a private repo — the git clone"
-  err "step inside the container needs a token with read access."
-  err "Create one at https://github.com/settings/tokens?type=beta and re-run with:"
-  err "  GH_TOKEN=\"<token>\" bash -c \"\$(curl -fsSL -H \"Authorization: token \$GH_TOKEN\" https://raw.githubusercontent.com/GrilTEK/resaprint/main/proxmox/install-resaprint-lxc.sh)\""
-  exit 1
+# GH_TOKEN is optional now that the repo is public — only needed again
+# if the repo is made private in the future.
+AUTH_REPO_URL="$REPO_URL"
+if [[ -n "$GH_TOKEN" ]]; then
+  AUTH_REPO_URL="$(echo "$REPO_URL" | sed "s|https://|https://x-access-token:${GH_TOKEN}@|")"
 fi
-
-# Inject the token into the clone URL (used only inside the container,
-# never logged or written to disk in this form beyond the clone step).
-AUTH_REPO_URL="$(echo "$REPO_URL" | sed "s|https://|https://x-access-token:${GH_TOKEN}@|")"
 
 if [[ $EUID -ne 0 ]]; then
   err "Run this as root on the Proxmox host."

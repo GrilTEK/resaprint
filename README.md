@@ -40,9 +40,9 @@ flowchart LR
 
 ## Quick start
 
-- **Backend deploy on Proxmox (one command)**: this repo is private, so you need a [fine-grained PAT](https://github.com/settings/tokens?type=beta) with `Contents: Read-only` on `griltek/resaprint` first. Then, on the Proxmox host as root —
+- **Backend deploy on Proxmox (one command)**: run on the Proxmox host as root —
   ```bash
-  GH_TOKEN="<your token>" bash -c "$(curl -fsSL -H "Authorization: token $GH_TOKEN" https://raw.githubusercontent.com/GrilTEK/resaprint/main/proxmox/install-resaprint-lxc.sh)"
+  bash -c "$(curl -fsSL https://raw.githubusercontent.com/GrilTEK/resaprint/main/proxmox/install-resaprint-lxc.sh)"
   ```
   Creates a new LXC, installs Docker, and starts the stack. See [`proxmox/install-resaprint-lxc.sh`](proxmox/install-resaprint-lxc.sh) for override variables and [`docs/BACKEND.md`](docs/BACKEND.md) for manual `docker compose` deploy, env vars, IMAP setup, and the parser field-mapping guide.
 - **Windows client install**: see [`docs/CLIENT.md`](docs/CLIENT.md) — download the release zip, run `install.ps1` as admin, pair the station.
