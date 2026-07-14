@@ -52,7 +52,7 @@ both wrong-PIN and locked-PIN cases to avoid leaking lockout state.
 | GET | `/api/v1/stations` | admin | |
 | POST | `/api/v1/stations` | admin | `connection_type`: `lan_escpos` or `usb_agent` |
 | POST | `/api/v1/stations/{id}/pair` | admin | Generates a fresh API key, returned **once** in the response — only its hash is stored |
-| DELETE | `/api/v1/stations/{id}` | admin | Deactivates and revokes the station's API key |
+| DELETE | `/api/v1/stations/{id}` | admin | Hard delete — the row is removed and its print job history cascade-deletes with it. Returns 204. |
 | GET | `/api/v1/stations/{id}/status` | admin | Includes `last_seen_at`, updated on every successful poll |
 
 ## Parsers (field-mapping profiles)

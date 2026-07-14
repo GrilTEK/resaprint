@@ -38,4 +38,10 @@ class PrintStation(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    print_jobs: Mapped[list["PrintJob"]] = relationship(back_populates="station")  # noqa: F821
+    # cascade="all, delete-orphan" so deleting a station has SQLAlchemy
+    # actually DELETE its print_jobs rather than trying to null out
+    # station_id first (which would violate its NOT NULL constraint —
+    # station_id has no SET NULL fallback the way reservation_id does).
+    print_jobs: Mapped[list["PrintJob"]] = relationship(  # noqa: F821
+        back_populates="station", cascade="all, delete-orphan"
+    )

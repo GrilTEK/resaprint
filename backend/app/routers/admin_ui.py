@@ -214,6 +214,26 @@ async def pair_station_action(
     return templates.TemplateResponse(request, "stations/_pairing_modal.html", {"api_key": api_key})
 
 
+@router.post("/stations/{station_id}/delete")
+async def delete_station_action(
+    station_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_session_html),
+):
+    station = await db.get(PrintStation, station_id)
+    if station is not None:
+        await audit.log(
+            db, actor=admin.label, action="station.deleted", entity_type="print_station", entity_id=station.id,
+            detail={"name": station.name},
+        )
+        await db.delete(station)
+        await db.commit()
+
+    stations = (await db.execute(select(PrintStation).order_by(PrintStation.name))).scalars().all()
+    return templates.TemplateResponse(request, "stations/list.html", {"admin": admin, "stations": stations})
+
+
 @router.get("/parsers")
 async def parsers_page(
     request: Request,

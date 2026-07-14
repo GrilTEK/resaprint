@@ -25,7 +25,7 @@ async def test_create_list_and_pair_station(authed_client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_deactivate_station_revokes_key(authed_client: AsyncClient):
+async def test_delete_station_removes_it_entirely(authed_client: AsyncClient):
     create_resp = await authed_client.post(
         "/api/v1/stations", json={"name": "Reception USB", "connection_type": "usb_agent"}
     )
@@ -33,10 +33,43 @@ async def test_deactivate_station_revokes_key(authed_client: AsyncClient):
     await authed_client.post(f"/api/v1/stations/{station_id}/pair")
 
     delete_resp = await authed_client.delete(f"/api/v1/stations/{station_id}")
-    assert delete_resp.status_code == 200
-    body = delete_resp.json()
-    assert body["is_active"] is False
-    assert body["api_key_prefix"] is None
+    assert delete_resp.status_code == 204
+
+    get_resp = await authed_client.get(f"/api/v1/stations/{station_id}/status")
+    assert get_resp.status_code == 404
+
+    list_resp = await authed_client.get("/api/v1/stations")
+    assert list_resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_delete_station_name_becomes_reusable(authed_client: AsyncClient):
+    create_resp = await authed_client.post(
+        "/api/v1/stations", json={"name": "Reception USB", "connection_type": "usb_agent"}
+    )
+    station_id = create_resp.json()["id"]
+
+    await authed_client.delete(f"/api/v1/stations/{station_id}")
+
+    recreate_resp = await authed_client.post(
+        "/api/v1/stations", json={"name": "Reception USB", "connection_type": "usb_agent"}
+    )
+    assert recreate_resp.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_delete_station_cascades_print_jobs(authed_client: AsyncClient):
+    create_resp = await authed_client.post(
+        "/api/v1/stations", json={"name": "Reception USB", "connection_type": "usb_agent"}
+    )
+    station_id = create_resp.json()["id"]
+    await authed_client.post("/api/v1/print-jobs", json={"station_id": station_id, "payload_text": "Hello"})
+
+    delete_resp = await authed_client.delete(f"/api/v1/stations/{station_id}")
+    assert delete_resp.status_code == 204
+
+    jobs_resp = await authed_client.get("/api/v1/print-jobs")
+    assert jobs_resp.json() == []
 
 
 @pytest.mark.asyncio

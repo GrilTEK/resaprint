@@ -60,23 +60,27 @@ async def pair_station(
     return PairResponse(station_id=station.id, api_key=api_key)
 
 
-@router.delete("/{station_id}", response_model=PrintStationOut)
-async def deactivate_station(
+@router.delete("/{station_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_station(
     station_id: int,
     db: AsyncSession = Depends(get_db),
     admin: AdminPin = Depends(require_admin_session),
-) -> PrintStation:
+) -> None:
+    """Hard delete — the row is actually removed (and its print job
+    history cascade-deleted via the FK), freeing up the station's
+    unique name for reuse. If you just want to temporarily stop a
+    station without losing its history, revoke its pairing instead of
+    deleting it."""
     station = await db.get(PrintStation, station_id)
     if station is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="station not found")
 
-    station.is_active = False
-    station.api_key_hash = None
-    station.api_key_prefix = None
-    await audit.log(db, actor=admin.label, action="station.deactivated", entity_type="print_station", entity_id=station.id)
+    await audit.log(
+        db, actor=admin.label, action="station.deleted", entity_type="print_station", entity_id=station.id,
+        detail={"name": station.name},
+    )
+    await db.delete(station)
     await db.commit()
-    await db.refresh(station)
-    return station
 
 
 @router.get("/{station_id}/status", response_model=PrintStationOut)

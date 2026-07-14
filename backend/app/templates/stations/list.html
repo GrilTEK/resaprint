@@ -18,6 +18,13 @@
           {% if s.connection_type.value == "usb_agent" %}
           <button hx-post="/stations/{{ s.id }}/pair" hx-target="#pairing-modal" class="secondary">Pair</button>
           {% endif %}
+          <button
+            hx-post="/stations/{{ s.id }}/delete"
+            hx-target="body"
+            hx-confirm="Delete station &quot;{{ s.name }}&quot;? This also deletes its print job history and cannot be undone."
+            class="secondary"
+            style="background: var(--danger); color: #fff;"
+          >Delete</button>
         </td>
       </tr>
       {% endfor %}
