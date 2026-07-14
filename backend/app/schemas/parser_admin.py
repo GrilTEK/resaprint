@@ -23,12 +23,14 @@ class ParserFieldMappingOut(BaseModel):
     profile_slug: str
     is_active: bool
     match_subject_regex: str | None
+    room_line_pattern: str | None
     fields: list[ParserFieldMappingFieldOut] = []
 
 
 class ParserFieldMappingCreate(BaseModel):
     profile_slug: str
     match_subject_regex: str | None = None
+    room_line_pattern: str | None = None
     is_active: bool = True
 
 

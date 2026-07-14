@@ -3,6 +3,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.deps import get_db, require_admin_session
 from app.models.admin_pin import AdminPin
@@ -124,7 +125,11 @@ async def print_reservation(
     db: AsyncSession = Depends(get_db),
     admin: AdminPin = Depends(require_admin_session),
 ) -> dict:
-    reservation = await db.get(Reservation, reservation_id)
+    reservation = (
+        await db.execute(
+            select(Reservation).options(selectinload(Reservation.room_lines)).where(Reservation.id == reservation_id)
+        )
+    ).scalar_one_or_none()
     if reservation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="reservation not found")
 

@@ -14,7 +14,14 @@ from decimal import Decimal, InvalidOperation
 from typing import Protocol
 
 from app.models.parser_mapping import ExtractionType, FieldTransform, ParserFieldMapping
-from app.schemas.parser import PARSED_RESERVATION_FIELDS, ParsedReservation
+from app.schemas.parser import PARSED_RESERVATION_FIELDS, ParsedReservation, RoomLineDTO
+
+_ROOM_LINE_GROUP_TRANSFORMS: dict[str, FieldTransform] = {
+    "room_type": FieldTransform.strip,
+    "nights": FieldTransform.none,
+    "price_per_night": FieldTransform.parse_decimal,
+    "price_total": FieldTransform.parse_decimal,
+}
 
 
 class ParserError(ValueError):
@@ -84,7 +91,39 @@ class GenericFieldMappingParser:
             values[field.target_field] = _apply_transform(raw_value, field.transform)
 
         values.setdefault("source_channel", self._mapping.profile_slug)
+        values["room_lines"] = self._extract_room_lines(raw_body)
         return ParsedReservation.model_validate(values)
+
+    def _extract_room_lines(self, raw_body: str) -> list[RoomLineDTO]:
+        """Room lines are optional: one regex with named groups
+        (?P<room_type>...), (?P<nights>...), (?P<price_per_night>...),
+        (?P<price_total>...), applied with re.finditer so a reservation
+        covering multiple room types/rates produces one RoomLineDTO per
+        match instead of only the first one being kept."""
+        pattern = self._mapping.room_line_pattern
+        if not pattern:
+            return []
+
+        lines: list[RoomLineDTO] = []
+        for match in re.finditer(pattern, raw_body, re.MULTILINE):
+            groups = match.groupdict()
+            if not groups.get("room_type"):
+                continue
+
+            parsed: dict[str, object] = {"room_type": groups["room_type"].strip()}
+            for key in ("nights", "price_per_night", "price_total"):
+                raw_value = groups.get(key)
+                if raw_value is None:
+                    continue
+                transform = _ROOM_LINE_GROUP_TRANSFORMS[key]
+                try:
+                    parsed[key] = int(raw_value.strip()) if key == "nights" else _apply_transform(raw_value, transform)
+                except (ValueError, ParserError):
+                    continue
+
+            lines.append(RoomLineDTO.model_validate(parsed))
+
+        return lines
 
     def _extract(self, field, raw_body: str, content_type: str) -> str | None:
         if field.extraction_type == ExtractionType.regex:

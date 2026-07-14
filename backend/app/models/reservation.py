@@ -10,6 +10,7 @@ from app.db import Base
 
 if TYPE_CHECKING:
     from app.models.print_job import PrintJob
+    from app.models.reservation_room_line import ReservationRoomLine
 
 
 class ReservationStatus(str, enum.Enum):
@@ -54,3 +55,8 @@ class Reservation(Base):
     )
 
     print_jobs: Mapped[list["PrintJob"]] = relationship(back_populates="reservation")
+    room_lines: Mapped[list["ReservationRoomLine"]] = relationship(
+        back_populates="reservation",
+        cascade="all, delete-orphan",
+        order_by="ReservationRoomLine.sort_order",
+    )

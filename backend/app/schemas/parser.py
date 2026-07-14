@@ -22,6 +22,13 @@ PARSED_RESERVATION_FIELDS = frozenset(
 )
 
 
+class RoomLineDTO(BaseModel):
+    room_type: str
+    nights: int | None = None
+    price_per_night: Decimal | None = None
+    price_total: Decimal | None = None
+
+
 class ParsedReservation(BaseModel):
     external_ref: str | None = None
     source_channel: str
@@ -36,3 +43,4 @@ class ParsedReservation(BaseModel):
     price_total: Decimal | None = None
     price_currency: str = "EUR"
     extra_fields: dict[str, Any] = {}
+    room_lines: list[RoomLineDTO] = []

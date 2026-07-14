@@ -10,6 +10,7 @@ from app.models.parser_mapping import (
 from app.models.print_job import PrintJob, PrintJobStatus
 from app.models.print_station import PrintStation, StationConnectionType
 from app.models.reservation import Reservation, ReservationStatus
+from app.models.reservation_room_line import ReservationRoomLine
 
 __all__ = [
     "AdminPin",
@@ -24,5 +25,6 @@ __all__ = [
     "PrintStation",
     "StationConnectionType",
     "Reservation",
+    "ReservationRoomLine",
     "ReservationStatus",
 ]

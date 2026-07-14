@@ -49,6 +49,25 @@
 </div>
 
 <div class="card">
+  <h2>Room lines (optional — multi-room bookings)</h2>
+  <p style="color: #666; font-size: 0.85rem;">
+    A single regex with named groups, matched repeatedly (not just the
+    first hit) so a reservation covering several room types/rates
+    produces one line item per match instead of only the first one.
+    Required group: <code>(?P&lt;room_type&gt;...)</code>. Optional:
+    <code>(?P&lt;nights&gt;...)</code>, <code>(?P&lt;price_per_night&gt;...)</code>,
+    <code>(?P&lt;price_total&gt;...)</code>.
+  </p>
+  <form hx-post="/parsers/{{ mapping.id }}/room-line-pattern" hx-target="body">
+    <div class="form-row">
+      <label>Pattern</label>
+      <textarea name="room_line_pattern" rows="3">{{ mapping.room_line_pattern or "" }}</textarea>
+    </div>
+    <button type="submit">Save</button>
+  </form>
+</div>
+
+<div class="card">
   <h2>Test parse</h2>
   <form hx-post="/parsers/{{ mapping.id }}/test" hx-target="#test-result">
     <div class="form-row"><label>Sample subject</label><input type="text" name="subject"></div>

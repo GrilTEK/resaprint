@@ -14,6 +14,8 @@ from app.services.escpos_builder import ReceiptBuilder
 
 def build_reservation_receipt(reservation: Reservation, station: PrintStation) -> tuple[str, bytes]:
     width = station.paper_width_cols
+    nights = max((reservation.checkout - reservation.checkin).days, 0)
+
     builder = ReceiptBuilder(codepage=station.codepage)
     builder.align_center().bold_line("ResaPrint")
     builder.divider(width)
@@ -21,26 +23,48 @@ def build_reservation_receipt(reservation: Reservation, station: PrintStation) -
     builder.kv_line("Guest:", reservation.guest_name, width=width)
     builder.kv_line("Check-in:", reservation.checkin.isoformat(), width=width)
     builder.kv_line("Check-out:", reservation.checkout.isoformat(), width=width)
-    if reservation.room_type:
-        builder.kv_line("Room:", reservation.room_type, width=width)
     if reservation.external_ref:
         builder.kv_line("Ref#:", reservation.external_ref, width=width)
+
+    text_lines = [
+        f"Guest: {reservation.guest_name}",
+        f"Check-in: {reservation.checkin.isoformat()}",
+        f"Check-out: {reservation.checkout.isoformat()}",
+        f"Ref#: {reservation.external_ref or '-'}",
+    ]
+
+    if reservation.room_lines:
+        builder.divider(width)
+        for line in reservation.room_lines:
+            builder.line(line.room_type)
+            if line.nights is not None:
+                builder.kv_line("  Nights:", str(line.nights), width=width)
+            if line.price_per_night is not None:
+                builder.kv_line("  Per night:", f"{reservation.price_currency} {line.price_per_night}", width=width)
+            if line.price_total is not None:
+                builder.kv_line("  Line total:", f"{reservation.price_currency} {line.price_total}", width=width)
+            text_lines.append(
+                f"Room: {line.room_type} | nights={line.nights or '-'} "
+                f"per_night={line.price_per_night or '-'} total={line.price_total or '-'}"
+            )
+    elif reservation.room_type:
+        builder.kv_line("Room:", reservation.room_type, width=width)
+        text_lines.append(f"Room: {reservation.room_type}")
+
     if reservation.price_total is not None:
-        builder.kv_line(
-            "Total:", f"{reservation.price_currency} {reservation.price_total}", width=width
-        )
+        builder.divider(width)
+        builder.kv_line("Total:", f"{reservation.price_currency} {reservation.price_total}", width=width)
+        text_lines.append(f"Total: {reservation.price_currency} {reservation.price_total}")
+        if nights > 0:
+            avg_per_night = reservation.price_total / nights
+            builder.kv_line("Avg/night:", f"{reservation.price_currency} {avg_per_night:.2f}", width=width)
+            text_lines.append(f"Avg/night: {reservation.price_currency} {avg_per_night:.2f}")
+
     builder.divider(width)
     builder.line(f"Printed {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
     builder.feed(3).cut()
 
-    text_summary = (
-        f"Guest: {reservation.guest_name}\n"
-        f"Check-in: {reservation.checkin.isoformat()}\n"
-        f"Check-out: {reservation.checkout.isoformat()}\n"
-        f"Room: {reservation.room_type or '-'}\n"
-        f"Ref#: {reservation.external_ref or '-'}\n"
-        f"Total: {reservation.price_currency} {reservation.price_total or '-'}\n"
-    )
+    text_summary = "\n".join(text_lines) + "\n"
     return text_summary, builder.build()
 
 

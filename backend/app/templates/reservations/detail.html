@@ -5,12 +5,33 @@
 <div class="card">
   <div class="form-row"><label>Check-in</label>{{ reservation.checkin }}</div>
   <div class="form-row"><label>Check-out</label>{{ reservation.checkout }}</div>
+  {% if not reservation.room_lines %}
   <div class="form-row"><label>Room type</label>{{ reservation.room_type or "-" }}</div>
+  {% endif %}
   <div class="form-row"><label>Source channel</label>{{ reservation.source_channel }}</div>
   <div class="form-row"><label>Reference</label>{{ reservation.external_ref or "-" }}</div>
   <div class="form-row"><label>Total price</label>{{ reservation.price_currency }} {{ reservation.price_total or "-" }}</div>
   <div class="form-row"><label>Status</label><span class="badge badge-{{ reservation.status.value }}">{{ reservation.status.value }}</span></div>
 </div>
+
+{% if reservation.room_lines %}
+<div class="card">
+  <h2>Room lines</h2>
+  <table>
+    <thead><tr><th>Room type</th><th>Nights</th><th>Price/night</th><th>Line total</th></tr></thead>
+    <tbody>
+      {% for line in reservation.room_lines %}
+      <tr>
+        <td>{{ line.room_type }}</td>
+        <td>{{ line.nights or "-" }}</td>
+        <td>{{ line.price_per_night or "-" }}</td>
+        <td>{{ line.price_total or "-" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
 
 <div class="card">
   <h2>Print</h2>

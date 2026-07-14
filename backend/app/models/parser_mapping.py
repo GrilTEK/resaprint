@@ -30,6 +30,13 @@ class ParserFieldMapping(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     match_subject_regex: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
+    # Optional: a single regex with named groups (?P<room_type>...),
+    # (?P<price_total>...), (?P<price_per_night>...), (?P<nights>...) —
+    # applied with re.finditer (not re.search) so a reservation email
+    # covering multiple room types/rates produces one ReservationRoomLine
+    # per match instead of only the first one being captured.
+    room_line_pattern: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

@@ -85,7 +85,11 @@ async def reservation_detail_page(
     db: AsyncSession = Depends(get_db),
     admin: AdminPin = Depends(require_admin_session_html),
 ):
-    reservation = await db.get(Reservation, reservation_id)
+    reservation = (
+        await db.execute(
+            select(Reservation).options(selectinload(Reservation.room_lines)).where(Reservation.id == reservation_id)
+        )
+    ).scalar_one_or_none()
     stations = (
         await db.execute(select(PrintStation).where(PrintStation.is_active.is_(True)).order_by(PrintStation.name))
     ).scalars().all()
@@ -102,7 +106,11 @@ async def reservation_print_action(
     db: AsyncSession = Depends(get_db),
     admin: AdminPin = Depends(require_admin_session_html),
 ):
-    reservation = await db.get(Reservation, reservation_id)
+    reservation = (
+        await db.execute(
+            select(Reservation).options(selectinload(Reservation.room_lines)).where(Reservation.id == reservation_id)
+        )
+    ).scalar_one_or_none()
     station = await db.get(PrintStation, station_id)
     if reservation is None or station is None or not station.is_active:
         return templates.TemplateResponse(
@@ -254,6 +262,30 @@ async def parser_detail_page(
     db: AsyncSession = Depends(get_db),
     admin: AdminPin = Depends(require_admin_session_html),
 ):
+    mapping = await _mapping_or_404(db, mapping_id)
+    return templates.TemplateResponse(
+        request,
+        "parsers/_mapping_form.html",
+        {"admin": admin, "mapping": mapping, "target_fields": sorted(PARSED_RESERVATION_FIELDS)},
+    )
+
+
+@router.post("/parsers/{mapping_id}/room-line-pattern")
+async def update_room_line_pattern_action(
+    mapping_id: int,
+    request: Request,
+    room_line_pattern: str = Form(default=""),
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_session_html),
+):
+    mapping = await _mapping_or_404(db, mapping_id)
+    mapping.room_line_pattern = room_line_pattern or None
+    await audit.log(
+        db, actor=admin.label, action="parser.room_line_pattern_updated",
+        entity_type="parser_field_mapping", entity_id=mapping.id,
+    )
+    await db.commit()
+
     mapping = await _mapping_or_404(db, mapping_id)
     return templates.TemplateResponse(
         request,

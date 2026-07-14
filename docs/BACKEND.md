@@ -178,6 +178,33 @@ reprocessed every poll) and logged to the audit log with action
 `email.unparsed`, including the subject — check there first if a
 reservation seems to be missing.
 
+### Multi-room bookings (room lines)
+
+A single `guest_name`/`checkin`/`checkout` field mapping only captures
+one `room_type`/`price_total` per email — fine for most bookings, but
+a reservation covering several room types/rates in one email needs
+more than one line item. Set **Room line pattern** on the profile page:
+one regex with named groups, matched repeatedly (`re.finditer`, not
+`re.search`) so every room in the email becomes its own
+`ReservationRoomLine` row instead of only the first one being kept.
+
+- Required group: `(?P<room_type>...)`
+- Optional groups: `(?P<nights>...)`, `(?P<price_per_night>...)`,
+  `(?P<price_total>...)`
+
+Example, for an email with repeated blocks like:
+```
+Type: ECONOMY DOUBLE ROOM WITH BREAKFAST
+...
+Guest: jane doePrice: 150.00
+```
+a pattern like
+`^Type:\s*(?P<room_type>.+)$\n(?:.*\n)*?^Guest:.*?Price:\s*(?P<price_total>[\d.]+)`
+extracts one line per `Type:`/`Guest:...Price:` block. Receipts print
+each room line plus the reservation's overall total and an "Avg/night"
+line (`price_total / nights`, computed — not re-extracted per line
+unless you capture `price_per_night` yourself).
+
 ## Printing
 
 - **LAN ESC/POS**: create a `print_stations` row with

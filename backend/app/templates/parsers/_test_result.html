@@ -6,8 +6,26 @@
 <table>
   <tbody>
     {% for k, v in result.parsed.items() %}
+    {% if k != "room_lines" %}
     <tr><th>{{ k }}</th><td>{{ v }}</td></tr>
+    {% endif %}
     {% endfor %}
   </tbody>
 </table>
+{% if result.parsed.room_lines %}
+<h4>Room lines ({{ result.parsed.room_lines|length }})</h4>
+<table>
+  <thead><tr><th>Room type</th><th>Nights</th><th>Price/night</th><th>Line total</th></tr></thead>
+  <tbody>
+    {% for line in result.parsed.room_lines %}
+    <tr>
+      <td>{{ line.room_type }}</td>
+      <td>{{ line.nights or "-" }}</td>
+      <td>{{ line.price_per_night or "-" }}</td>
+      <td>{{ line.price_total or "-" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
 {% endif %}

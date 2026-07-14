@@ -30,6 +30,7 @@ from sqlalchemy.orm import selectinload
 from app.db import async_session_maker
 from app.models.parser_mapping import ParserFieldMapping
 from app.models.reservation import Reservation, ReservationStatus
+from app.models.reservation_room_line import ReservationRoomLine
 from app.services import audit
 from app.services.app_settings import get_or_create_settings
 from app.services.crypto import decrypt
@@ -212,12 +213,22 @@ async def _process_email(
         return
 
     reservation = Reservation(
-        **parsed.model_dump(exclude={"extra_fields"}),
+        **parsed.model_dump(exclude={"extra_fields", "room_lines"}),
         parser_slug=parser.slug,
         raw_source_text=fetched.body,
         extra_fields=parsed.extra_fields or None,
         status=ReservationStatus.confirmed,
     )
+    for index, room_line in enumerate(parsed.room_lines):
+        reservation.room_lines.append(
+            ReservationRoomLine(
+                sort_order=index,
+                room_type=room_line.room_type,
+                nights=room_line.nights,
+                price_per_night=room_line.price_per_night,
+                price_total=room_line.price_total,
+            )
+        )
     db.add(reservation)
     await db.flush()
     await audit.log(
