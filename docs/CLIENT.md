@@ -41,36 +41,83 @@ flowing**, because:
   Panel → Devices and Printers → Add printer). Use a generic driver —
   "Generic / Text Only" works well, or the printer manufacturer's
   driver if it exposes a plain queue name — since the Agent sends raw
-  ESC/POS bytes and does not rely on driver-side rendering. Note the
-  exact **printer queue name** as it appears in Windows; you'll need it
-  during install.
-- The station must already exist in the ResaPrint admin UI (Stations
-  page) with `connection_type = usb_agent`, and you'll need its
-  **station ID** and a **paired API key** (see below).
+  ESC/POS bytes and does not rely on driver-side rendering. You do
+  **not** need to know the exact queue name up front — the installer
+  shows a picker (see below).
+- An admin PIN for the ResaPrint backend (simplest path — the
+  installer pairs the station for you), or a station already created
+  and paired manually via the admin UI's Stations page if you prefer
+  that route.
 
 ## Install
+
+This machine is a normal Windows PC on the same LAN as the backend
+(the backend itself typically runs in a container on Proxmox
+elsewhere) — the Agent only needs network access to the backend's URL
+and a USB-connected receipt printer plugged into this PC.
 
 1. Download the release zip from the repo's Releases page (built by
    `.github/workflows/client-release.yml` on every `client-v*` tag).
 2. Extract it anywhere.
-3. In the admin web UI, go to **Stations**, create (or select) a
-   `usb_agent` station, and click **Pair** — copy the API key shown
-   (it is shown once and not recoverable afterward; re-pair if lost).
-4. Open an elevated PowerShell prompt in the extracted folder and run:
+3. Open an elevated PowerShell prompt in the extracted folder and run:
 
    ```powershell
-   .\install.ps1 -ApiBaseUrl "https://resaprint.example.internal" `
-                 -StationId 3 `
-                 -ApiKey "<paste the API key here>" `
-                 -PrinterName "POS-80 Series"
+   .\install.ps1 -ApiBaseUrl "http://192.168.1.50:8000" -AdminPin 1234
    ```
 
-   This installs and starts the `ResaPrintAgent` service and registers
-   the Tray app to start at the next logon. To start the Tray
-   immediately without logging out: `Start-Process ".\ResaPrint.Tray.exe"`.
+   This one command:
+   - shows a numbered list of installed Windows printers to pick from
+     (no need to type the exact queue name)
+   - optionally sends a test print right there, before anything is
+     installed, so a printer/queue problem is caught immediately
+   - logs in with the admin PIN, creates a new station named after
+     this PC (override with `-StationName "Front Desk PC"`), and pairs
+     it — no manual copy-pasting a station ID/API key out of the admin
+     UI
+   - installs and starts the `ResaPrintAgent` service, and registers
+     the Tray app to start at the next logon
+
+   Prefer to pair manually via the admin UI's Stations page instead?
+   Skip `-AdminPin`/`-StationName` and pass `-StationId`/`-ApiKey`
+   directly:
+
+   ```powershell
+   .\install.ps1 -ApiBaseUrl "http://192.168.1.50:8000" -StationId 3 -ApiKey "<paste the API key here>"
+   ```
+
+   Either way, `-PrinterName "POS-80 Series"` can be passed up front to
+   skip the interactive picker (useful for scripted/repeat installs).
+
+   To start the Tray immediately without logging out:
+   `Start-Process ".\ResaPrint.Tray.exe"`.
 
 Re-running `install.ps1` is safe — it stops the existing service,
 replaces the binary, and re-registers everything.
+
+## Changing local settings later (no re-pairing needed)
+
+If you just need to change the printer or poll interval — not the
+backend URL or station — use `installer\update-local-config.ps1`
+instead of a full reinstall (the existing pairing/API key is left
+untouched):
+
+```powershell
+installer\update-local-config.ps1                              # shows current config
+installer\update-local-config.ps1 -PrinterName "POS-80 Series"
+installer\update-local-config.ps1 -PollIntervalSeconds 10
+```
+
+This calls the Agent's own `--show-config`/`--set-printer-name`/
+`--set-poll-interval` and restarts the service. You can also run these
+directly:
+
+```powershell
+& "$env:ProgramFiles\ResaPrint\Agent\ResaPrint.Agent.exe" --show-config
+& "$env:ProgramFiles\ResaPrint\Agent\ResaPrint.Agent.exe" --test-print --printer-name "POS-80 Series"
+```
+
+`--test-print` works even if the Agent isn't paired/configured yet —
+it talks directly to the Windows print spooler, nothing else.
 
 ## Uninstall
 
@@ -97,8 +144,9 @@ Returns JSON: `running`, `configured`, `backendReachable`, `lastPollAt`,
 | Tray icon is yellow/gold | Service is running but can't reach the backend — check `ApiBaseUrl`, network/DNS, and that the backend container is up |
 | `configured: false` in status JSON | Pairing never completed or the DPAPI config is unreadable (e.g. moved to a different machine, or the service is somehow not running as the account that encrypted it) — re-run `install-agent.ps1` with a fresh API key |
 | Print jobs stay `queued` in the admin UI | Agent isn't polling — check status endpoint's `lastPollAt`; confirm the station's API key hasn't been revoked (re-pairing generates a new one) |
-| Printer not found / `WritePrinter failed` | Confirm the exact Windows printer queue name matches `-PrinterName` used at install (`Get-Printer` lists installed queues); reinstall with the corrected name via `--configure` (see below) |
-| Need to change config without a full reinstall | Re-run `ResaPrint.Agent.exe --configure --api-base-url ... --station-id ... --api-key ... --printer-name ...` directly, then `Restart-Service ResaPrintAgent` |
+| Printer not found / `WritePrinter failed` | Run `ResaPrint.Agent.exe --test-print --printer-name "..."` to isolate the problem, then fix the printer name with `installer\update-local-config.ps1 -PrinterName "..."` |
+| Need to change printer/poll interval only | `installer\update-local-config.ps1 -PrinterName "..."` or `-PollIntervalSeconds N` — no re-pairing needed |
+| Need to re-pair (new backend URL, station, or API key) | Re-run `install.ps1` — it's safe to run again and replaces the existing config |
 
 Service recovery is configured via `sc.exe failure` during install:
 restart after 5s, 30s, then 60s on repeated failures, so transient
