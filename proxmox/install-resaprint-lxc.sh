@@ -212,8 +212,19 @@ cat <<EOF
  ResaPrint LXC $CTID is up.
 ============================================================
 
- Container IP:   ${CTIP:-<unknown, run 'pct exec $CTID -- hostname -I'>}
+ Container IP:   ${CTIP:-<unknown, run "pct exec $CTID -- ip -4 -o addr show dev eth0">}
  Backend port:   8000  (http://${CTIP:-<container-ip>}:8000)
+
+ IMPORTANT — login won't work yet over plain http://<ip>:8000 :
+   backend/.env has SESSION_COOKIE_SECURE=true (the safe default), so
+   browsers refuse to store the session cookie over an insecure (non-
+   TLS) connection. Until Nginx Proxy Manager + TLS is set up (step 2),
+   either browse via HTTPS through NPM, or temporarily allow plain
+   http for local testing:
+     pct exec $CTID -- sed -i 's/^SESSION_COOKIE_SECURE=.*/SESSION_COOKIE_SECURE=false/' /opt/resaprint/backend/.env
+     pct exec $CTID -- bash -c "cd /opt/resaprint && docker compose up -d --build api"
+   Set it back to true once you're behind HTTPS — it's a real
+   security setting, not just a dev annoyance.
 
  Still to do:
 
@@ -222,8 +233,9 @@ cat <<EOF
     then restart the affected services:
       pct exec $CTID -- bash -c "cd /opt/resaprint && docker compose up -d --build ingest-worker api"
 
- 2. Point Nginx Proxy Manager at ${CTIP:-<container-ip>}:8000
-    (not managed by this script or the repo).
+ 2. Point Nginx Proxy Manager at ${CTIP:-<container-ip>}:8000 with TLS
+    (not managed by this script or the repo). Once that's live, make
+    sure SESSION_COOKIE_SECURE=true in backend/.env (see above).
 
  3. Create the first admin PIN:
       pct exec $CTID -- bash -c "docker compose -f /opt/resaprint/docker-compose.yml exec api python -c \"

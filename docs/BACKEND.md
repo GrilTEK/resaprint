@@ -80,7 +80,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 | Variable | Purpose |
 |---|---|
 | `SECRET_KEY` | Signs admin session cookies — set to a long random value in production |
-| `SESSION_COOKIE_SECURE` | Set `false` only for local http:// development |
+| `SESSION_COOKIE_SECURE` | `true` by default — browsers **silently refuse to store** a `Secure`-flagged cookie received over plain http. If you're testing directly against `http://<host-ip>:8000` before Nginx Proxy Manager/TLS is set up, login will appear to succeed (200 response) but the session cookie never sticks, so every page redirects back to `/login`. Set `false` temporarily for that case, and set it back to `true` once you're behind HTTPS. |
 | `SESSION_MAX_AGE_SECONDS` | Admin session lifetime (default 12h) |
 | `PIN_LOCKOUT_THRESHOLD` / `PIN_LOCKOUT_MINUTES` | Failed-PIN lockout policy |
 | `DATABASE_URL` | Full asyncpg connection string, must match `POSTGRES_*` below |
