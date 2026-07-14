@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Stations — ResaPrint{% endblock %}
+{% block content %}
+<h1>Print stations</h1>
+
+<div class="card">
+  <table>
+    <thead><tr><th>Name</th><th>Type</th><th>Target</th><th>Active</th><th>Last seen</th><th></th></tr></thead>
+    <tbody>
+      {% for s in stations %}
+      <tr>
+        <td>{{ s.name }}</td>
+        <td>{{ s.connection_type.value }}</td>
+        <td>{% if s.connection_type.value == "lan_escpos" %}{{ s.lan_host }}:{{ s.lan_port }}{% else %}{{ s.api_key_prefix or "unpaired" }}{% endif %}</td>
+        <td>{{ "yes" if s.is_active else "no" }}</td>
+        <td>{{ s.last_seen_at or "never" }}</td>
+        <td>
+          {% if s.connection_type.value == "usb_agent" %}
+          <button hx-post="/stations/{{ s.id }}/pair" hx-target="#pairing-modal" class="secondary">Pair</button>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div id="pairing-modal"></div>
+
+<div class="card">
+  <h2>Add station</h2>
+  {% include "stations/_form.html" %}
+</div>
+{% endblock %}

@@ -1,0 +1,5 @@
+{% if error %}
+<p class="error-text">{{ error }}</p>
+{% else %}
+<p>Print job #{{ print_job_id }} queued ({{ job_status }}).</p>
+{% endif %}

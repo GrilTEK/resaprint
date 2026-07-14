@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — ResaPrint{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+
+<div class="card">
+  <h2>Today's arrivals</h2>
+  <table>
+    <thead><tr><th>Guest</th><th>Check-in</th><th>Room</th><th>Status</th></tr></thead>
+    <tbody>
+      {% for r in todays_arrivals %}
+      <tr>
+        <td><a href="/reservations/{{ r.id }}">{{ r.guest_name }}</a></td>
+        <td>{{ r.checkin }}</td>
+        <td>{{ r.room_type or "-" }}</td>
+        <td><span class="badge badge-{{ r.status.value }}">{{ r.status.value }}</span></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4">No arrivals today.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Recent print jobs</h2>
+  <div hx-get="/print-jobs/table" hx-trigger="every 3s" hx-swap="innerHTML">
+    {% include "print_jobs/_table_body.html" %}
+  </div>
+</div>
+
+<div class="card">
+  <h2>Station health</h2>
+  <table>
+    <thead><tr><th>Station</th><th>Type</th><th>Last seen</th><th>Active</th></tr></thead>
+    <tbody>
+      {% for s in stations %}
+      <tr>
+        <td>{{ s.name }}</td>
+        <td>{{ s.connection_type.value }}</td>
+        <td>{{ s.last_seen_at or "never" }}</td>
+        <td>{{ "yes" if s.is_active else "no" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

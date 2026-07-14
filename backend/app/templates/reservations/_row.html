@@ -1,0 +1,8 @@
+<tr>
+  <td><a href="/reservations/{{ r.id }}">{{ r.guest_name }}</a></td>
+  <td>{{ r.checkin }}</td>
+  <td>{{ r.checkout }}</td>
+  <td>{{ r.source_channel }}</td>
+  <td><span class="badge badge-{{ r.status.value }}">{{ r.status.value }}</span></td>
+  <td><a href="/reservations/{{ r.id }}">View</a></td>
+</tr>

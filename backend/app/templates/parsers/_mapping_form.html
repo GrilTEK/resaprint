@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}{{ mapping.profile_slug }} — Parsers — ResaPrint{% endblock %}
+{% block content %}
+<h1>{{ mapping.profile_slug }}</h1>
+
+<div class="card">
+  <h2>Fields</h2>
+  <table>
+    <thead><tr><th>Label</th><th>Target</th><th>Type</th><th>Pattern</th><th>Transform</th><th>Required</th></tr></thead>
+    <tbody>
+      {% for f in mapping.fields %}
+      <tr>
+        <td>{{ f.label }}</td>
+        <td>{{ f.target_field }}</td>
+        <td>{{ f.extraction_type.value }}</td>
+        <td><code>{{ f.pattern }}</code></td>
+        <td>{{ f.transform.value }}</td>
+        <td>{{ "yes" if f.is_required else "no" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h3>Add field</h3>
+  <form hx-post="/parsers/{{ mapping.id }}/fields" hx-target="body">
+    <div class="form-row"><label>Label</label><input type="text" name="label" required></div>
+    <div class="form-row"><label>Target field</label>
+      <select name="target_field">
+        {% for tf in target_fields %}<option value="{{ tf }}">{{ tf }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="form-row"><label>Extraction type</label>
+      <select name="extraction_type"><option value="regex">regex</option><option value="xpath">xpath</option></select>
+    </div>
+    <div class="form-row"><label>Pattern</label><input type="text" name="pattern" required></div>
+    <div class="form-row"><label>Transform</label>
+      <select name="transform">
+        <option value="none">none</option>
+        <option value="strip">strip</option>
+        <option value="parse_date_iso">parse_date_iso</option>
+        <option value="parse_date_eu">parse_date_eu</option>
+        <option value="parse_decimal">parse_decimal</option>
+        <option value="upper">upper</option>
+        <option value="lower">lower</option>
+      </select>
+    </div>
+    <button type="submit">Add field</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Test parse</h2>
+  <form hx-post="/parsers/{{ mapping.id }}/test" hx-target="#test-result">
+    <div class="form-row"><label>Sample subject</label><input type="text" name="subject"></div>
+    <div class="form-row"><label>Sample body</label><textarea name="body" rows="8"></textarea></div>
+    <button type="submit">Test parse</button>
+  </form>
+  <div id="test-result"></div>
+</div>
+{% endblock %}

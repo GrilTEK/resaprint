@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}ResaPrint{% endblock %}</title>
+  <script src="/static/htmx.min.js"></script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  {% if admin %}
+  <nav class="topnav">
+    <a href="/" class="brand">ResaPrint</a>
+    <a href="/reservations">Reservations</a>
+    <a href="/print-jobs">Print jobs</a>
+    <a href="/stations">Stations</a>
+    <a href="/parsers">Parsers</a>
+    <a href="/audit-log">Audit log</a>
+    <span class="spacer"></span>
+    <span class="admin-label">{{ admin.label }}</span>
+    <button hx-post="/logout" hx-target="body" hx-push-url="/login">Log out</button>
+  </nav>
+  {% endif %}
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

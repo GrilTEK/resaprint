@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}{{ reservation.guest_name }} — ResaPrint{% endblock %}
+{% block content %}
+<h1>{{ reservation.guest_name }}</h1>
+<div class="card">
+  <div class="form-row"><label>Check-in</label>{{ reservation.checkin }}</div>
+  <div class="form-row"><label>Check-out</label>{{ reservation.checkout }}</div>
+  <div class="form-row"><label>Room type</label>{{ reservation.room_type or "-" }}</div>
+  <div class="form-row"><label>Source channel</label>{{ reservation.source_channel }}</div>
+  <div class="form-row"><label>Reference</label>{{ reservation.external_ref or "-" }}</div>
+  <div class="form-row"><label>Total price</label>{{ reservation.price_currency }} {{ reservation.price_total or "-" }}</div>
+  <div class="form-row"><label>Status</label><span class="badge badge-{{ reservation.status.value }}">{{ reservation.status.value }}</span></div>
+</div>
+
+<div class="card">
+  <h2>Print</h2>
+  <form hx-post="/reservations/{{ reservation.id }}/print" hx-target="#print-status">
+    <div class="form-row">
+      <label>Station</label>
+      <select name="station_id">
+        {% for s in stations %}
+        <option value="{{ s.id }}">{{ s.name }} ({{ s.connection_type.value }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit">Print now</button>
+  </form>
+  <div id="print-status"></div>
+</div>
+
+<div class="card">
+  <h2>Raw email source</h2>
+  <pre>{{ reservation.raw_source_text or "(none — manually created)" }}</pre>
+</div>
+{% endblock %}

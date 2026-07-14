@@ -1,0 +1,13 @@
+{% if not result.matched %}
+<p class="error-text">Subject did not match this profile's routing regex.</p>
+{% elif result.error %}
+<p class="error-text">Parse error: {{ result.error }}</p>
+{% else %}
+<table>
+  <tbody>
+    {% for k, v in result.parsed.items() %}
+    <tr><th>{{ k }}</th><td>{{ v }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}

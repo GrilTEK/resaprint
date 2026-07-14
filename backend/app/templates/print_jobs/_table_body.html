@@ -1,0 +1,17 @@
+<table>
+  <thead><tr><th>ID</th><th>Reservation</th><th>Station</th><th>Status</th><th>Attempts</th><th>Created</th></tr></thead>
+  <tbody>
+    {% for j in print_jobs %}
+    <tr>
+      <td>{{ j.id }}</td>
+      <td>{{ j.reservation_id or "-" }}</td>
+      <td>{{ j.station_id }}</td>
+      <td><span class="badge badge-{{ j.status.value }}">{{ j.status.value }}</span></td>
+      <td>{{ j.attempts }}</td>
+      <td>{{ j.created_at }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6">No print jobs yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
