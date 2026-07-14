@@ -237,13 +237,10 @@ cat <<EOF
     (not managed by this script or the repo). Once that's live, make
     sure SESSION_COOKIE_SECURE=true in backend/.env (see above).
 
- 3. Create the first admin PIN:
-      pct exec $CTID -- bash -c "docker compose -f /opt/resaprint/docker-compose.yml exec api python -c \"
-from passlib.context import CryptContext
-print(CryptContext(schemes=['bcrypt']).hash('1234'))
-\""
-    then insert it:
-      pct exec $CTID -- bash -c "docker compose -f /opt/resaprint/docker-compose.yml exec db psql -U resaprint -d resaprint -c \"INSERT INTO admin_pins (label, pin_hash) VALUES ('Recepcija', '<hash>');\""
+ 3. Create the first admin PIN (one step, no shell/psql relay — a
+    bcrypt hash contains \$ characters that get silently mangled if
+    you hash and INSERT as two separate manual bash steps):
+      pct exec $CTID -- bash -c "cd /opt/resaprint && docker compose exec api python scripts/create_admin_pin.py --label Recepcija --pin 1234"
 
  Full docs: https://github.com/GrilTEK/resaprint/blob/main/docs/BACKEND.md
 ============================================================

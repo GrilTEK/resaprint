@@ -93,19 +93,26 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
 ## First admin PIN
 
-There is no seed script — insert the first `admin_pins` row directly
-(bcrypt-hash a PIN yourself, e.g. via Python's `passlib`), or add a
-temporary one-off script. Once one admin PIN exists, use the Settings
-area (once implemented beyond v1) or a direct DB insert to add more
-named PINs. Example:
+Use `scripts/create_admin_pin.py` — it hashes and inserts (or updates,
+if the label already exists) the PIN in a single Python process, with
+no shell/psql relay involved:
 
 ```bash
-docker compose exec api python -c "
-from passlib.context import CryptContext
-print(CryptContext(schemes=['bcrypt']).hash('1234'))
-"
-# then INSERT INTO admin_pins (label, pin_hash) VALUES ('Front desk', '<hash>');
+docker compose exec api python scripts/create_admin_pin.py --label "Front desk" --pin 1234
 ```
+
+Omit `--pin` to be prompted for it instead (input hidden, doesn't end
+up in shell history). Re-running with the same `--label` rotates that
+PIN's hash rather than creating a duplicate row.
+
+**Do not** hash and insert the PIN as two separate manual steps through
+`bash -c "... INSERT ... '$hash' ..."` — bcrypt hashes contain `$`
+characters, and inside double-quoted shell strings `$2b`, `$12`, etc.
+are interpreted as (empty) shell variables, silently corrupting the
+hash. This exact failure mode produces `passlib.exc.UnknownHashError:
+hash could not be identified` in the API logs and a 500 on login. The
+script above avoids the problem entirely by never passing the hash
+through a shell.
 
 ## IMAP setup
 

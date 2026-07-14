@@ -22,6 +22,7 @@ COPY --from=base /usr/local/bin /usr/local/bin
 
 COPY app ./app
 COPY alembic ./alembic
+COPY scripts ./scripts
 COPY alembic.ini worker.py ./
 
 EXPOSE 8000
