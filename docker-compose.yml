@@ -2,14 +2,16 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-resaprint}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
-      POSTGRES_DB: ${POSTGRES_DB:-resaprint}
+    # env_file (not top-level ${VAR} interpolation) — Compose only
+    # resolves ${VAR} syntax in this file from a .env at the repo root
+    # or the shell environment, never from another service's env_file.
+    # Since backend/.env.example is the one and only documented place
+    # to set these, all services (including db) read from it directly.
+    env_file: ./backend/.env
     volumes:
       - resaprint-db-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-resaprint}"]
+      test: ["CMD-SHELL", "pg_isready -U resaprint"]
       interval: 5s
       timeout: 5s
       retries: 10
