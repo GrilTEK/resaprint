@@ -125,13 +125,22 @@ done
 CTIP="$(pct exec "$CTID" -- hostname -I | awk '{print $1}')"
 log "Container network IP: ${CTIP:-unknown}"
 
+# ---------- base packages ----------
+# The debian-12-standard template ships without curl/git — install
+# them (and what get-docker.sh needs) before using either. `set -eo
+# pipefail` inside each inner bash -c so a failed command (e.g. curl
+# missing) actually aborts instead of `| sh` silently succeeding on
+# empty stdin.
+log "Installing base packages (curl, git, ca-certificates)..."
+pct exec "$CTID" -- bash -c "set -eo pipefail; apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl git ca-certificates gnupg lsb-release"
+
 # ---------- install Docker inside the container ----------
 log "Installing Docker inside the container..."
-pct exec "$CTID" -- bash -c "curl -fsSL https://get.docker.com | sh"
+pct exec "$CTID" -- bash -c "set -eo pipefail; curl -fsSL https://get.docker.com | sh"
 
 # ---------- clone the repo and configure ----------
 log "Cloning ResaPrint ($REPO_BRANCH)..."
-pct exec "$CTID" -- bash -c "git clone --branch '$REPO_BRANCH' --depth 1 '$AUTH_REPO_URL' /opt/resaprint"
+pct exec "$CTID" -- bash -c "set -eo pipefail; git clone --branch '$REPO_BRANCH' --depth 1 '$AUTH_REPO_URL' /opt/resaprint"
 # Drop the token from the remote URL once cloned so it doesn't linger
 # in .git/config inside the container.
 pct exec "$CTID" -- bash -c "cd /opt/resaprint && git remote set-url origin '$REPO_URL'"
