@@ -2,9 +2,14 @@
 #
 # One-command ResaPrint installer for Proxmox VE.
 #
-# Run this ON THE PROXMOX HOST as root:
+# griltek/resaprint is a PRIVATE repo, so both fetching this script via
+# raw.githubusercontent.com and the `git clone` this script performs
+# need a GitHub token with at least read access to the repo. Create a
+# fine-grained PAT (Contents: Read-only) at
+# https://github.com/settings/tokens?type=beta, then run this ON THE
+# PROXMOX HOST as root:
 #
-#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/GrilTEK/resaprint/main/proxmox/install-resaprint-lxc.sh)"
+#   GH_TOKEN="<your token>" bash -c "$(curl -fsSL -H "Authorization: token $GH_TOKEN" https://raw.githubusercontent.com/GrilTEK/resaprint/main/proxmox/install-resaprint-lxc.sh)"
 #
 # It creates a new unprivileged Debian 12 LXC container, installs Docker
 # inside it, clones this repo, generates a secure .env (SECRET_KEY and
@@ -13,7 +18,7 @@
 # `docker compose up -d --build`.
 #
 # Override any default by exporting the variable before running, e.g.:
-#   CTID=150 MEMORY=4096 bash -c "$(curl -fsSL .../install-resaprint-lxc.sh)"
+#   GH_TOKEN=... CTID=150 MEMORY_MB=4096 bash -c "$(curl -fsSL -H "Authorization: token $GH_TOKEN" .../install-resaprint-lxc.sh)"
 #
 # This script does NOT configure Nginx Proxy Manager or create the first
 # admin PIN — both are one-off manual steps printed at the end (also
@@ -34,9 +39,22 @@ CORES="${CORES:-2}"
 TEMPLATE_PATTERN="${TEMPLATE_PATTERN:-debian-12-standard}"
 REPO_URL="${REPO_URL:-https://github.com/GrilTEK/resaprint.git}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
+GH_TOKEN="${GH_TOKEN:-}"
 
 log() { echo -e "\033[1;32m[resaprint]\033[0m $*"; }
 err() { echo -e "\033[1;31m[resaprint]\033[0m $*" >&2; }
+
+if [[ -z "$GH_TOKEN" ]]; then
+  err "GH_TOKEN is not set. griltek/resaprint is a private repo — the git clone"
+  err "step inside the container needs a token with read access."
+  err "Create one at https://github.com/settings/tokens?type=beta and re-run with:"
+  err "  GH_TOKEN=\"<token>\" bash -c \"\$(curl -fsSL -H \"Authorization: token \$GH_TOKEN\" https://raw.githubusercontent.com/GrilTEK/resaprint/main/proxmox/install-resaprint-lxc.sh)\""
+  exit 1
+fi
+
+# Inject the token into the clone URL (used only inside the container,
+# never logged or written to disk in this form beyond the clone step).
+AUTH_REPO_URL="$(echo "$REPO_URL" | sed "s|https://|https://x-access-token:${GH_TOKEN}@|")"
 
 if [[ $EUID -ne 0 ]]; then
   err "Run this as root on the Proxmox host."
@@ -118,7 +136,10 @@ pct exec "$CTID" -- bash -c "curl -fsSL https://get.docker.com | sh"
 
 # ---------- clone the repo and configure ----------
 log "Cloning ResaPrint ($REPO_BRANCH)..."
-pct exec "$CTID" -- bash -c "git clone --branch '$REPO_BRANCH' --depth 1 '$REPO_URL' /opt/resaprint"
+pct exec "$CTID" -- bash -c "git clone --branch '$REPO_BRANCH' --depth 1 '$AUTH_REPO_URL' /opt/resaprint"
+# Drop the token from the remote URL once cloned so it doesn't linger
+# in .git/config inside the container.
+pct exec "$CTID" -- bash -c "cd /opt/resaprint && git remote set-url origin '$REPO_URL'"
 
 SECRET_KEY="$(openssl rand -hex 32)"
 PG_PASSWORD="$(openssl rand -hex 16)"

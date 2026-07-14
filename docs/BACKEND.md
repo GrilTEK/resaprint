@@ -14,11 +14,20 @@ deployed via `docker-compose.yml` at the repo root as four services:
 
 ## Quick start — Proxmox one-command install (recommended)
 
-Run this **on the Proxmox host itself, as root**:
+`griltek/resaprint` is a **private** repo, so `raw.githubusercontent.com`
+needs a token to serve the script, and the `git clone` the script runs
+inside the new container needs one too. Create a [fine-grained personal
+access token](https://github.com/settings/tokens?type=beta) with
+`Contents: Read-only` on this repo, then run this **on the Proxmox host
+itself, as root**:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/GrilTEK/resaprint/main/proxmox/install-resaprint-lxc.sh)"
+GH_TOKEN="<your token>" bash -c "$(curl -fsSL -H "Authorization: token $GH_TOKEN" https://raw.githubusercontent.com/GrilTEK/resaprint/main/proxmox/install-resaprint-lxc.sh)"
 ```
+
+(Plain `curl` without the `Authorization` header returns 404 for a
+private repo — that's not a broken link, it's GitHub's normal behavior
+for unauthenticated requests to private content.)
 
 This creates a new unprivileged Debian 12 LXC (`nesting=1,keyctl=1` so
 Docker works inside it), installs Docker, clones this repo, generates a
@@ -26,6 +35,8 @@ random `SECRET_KEY` and `POSTGRES_PASSWORD`, and runs
 `docker compose up -d --build`. `IMAP_*` is left blank in the generated
 `.env` — the script prints the exact commands to fill those in and
 restart, plus how to create the first admin PIN, at the end of its run.
+The token is only used for the clone step and is stripped from the
+container's `.git/config` immediately afterward.
 
 Override any default (container ID, storage pool, network bridge,
 static IP, resources) via environment variables — see the top of
@@ -33,8 +44,8 @@ static IP, resources) via environment variables — see the top of
 for the full list, e.g.:
 
 ```bash
-CTID=150 MEMORY_MB=4096 IP_CONFIG="10.0.0.50/24,gw=10.0.0.1" \
-  bash -c "$(curl -fsSL https://raw.githubusercontent.com/GrilTEK/resaprint/main/proxmox/install-resaprint-lxc.sh)"
+GH_TOKEN="<your token>" CTID=150 MEMORY_MB=4096 IP_CONFIG="10.0.0.50/24,gw=10.0.0.1" \
+  bash -c "$(curl -fsSL -H "Authorization: token $GH_TOKEN" https://raw.githubusercontent.com/GrilTEK/resaprint/main/proxmox/install-resaprint-lxc.sh)"
 ```
 
 Nginx Proxy Manager configuration and the first admin PIN are
