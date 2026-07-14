@@ -1,0 +1,36 @@
+name: client-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "client/**"
+      - ".github/workflows/client-ci.yml"
+  pull_request:
+    paths:
+      - "client/**"
+      - ".github/workflows/client-ci.yml"
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        working-directory: client
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        run: dotnet restore ResaPrint.sln
+
+      - name: Build
+        run: dotnet build ResaPrint.sln --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test ResaPrint.Agent.Tests\ResaPrint.Agent.Tests.csproj --configuration Release --no-build --verbosity normal
