@@ -12,7 +12,37 @@ deployed via `docker-compose.yml` at the repo root as four services:
 | `api` | The FastAPI app (REST API + admin web UI), uvicorn on port 8000 internally |
 | `ingest-worker` | Standalone IMAP poll loop (`worker.py`), decoupled from `api` so a stuck IMAP connection can't affect API responsiveness |
 
-## Quick start
+## Quick start — Proxmox one-command install (recommended)
+
+Run this **on the Proxmox host itself, as root**:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/GrilTEK/resaprint/main/proxmox/install-resaprint-lxc.sh)"
+```
+
+This creates a new unprivileged Debian 12 LXC (`nesting=1,keyctl=1` so
+Docker works inside it), installs Docker, clones this repo, generates a
+random `SECRET_KEY` and `POSTGRES_PASSWORD`, and runs
+`docker compose up -d --build`. `IMAP_*` is left blank in the generated
+`.env` — the script prints the exact commands to fill those in and
+restart, plus how to create the first admin PIN, at the end of its run.
+
+Override any default (container ID, storage pool, network bridge,
+static IP, resources) via environment variables — see the top of
+[`proxmox/install-resaprint-lxc.sh`](../proxmox/install-resaprint-lxc.sh)
+for the full list, e.g.:
+
+```bash
+CTID=150 MEMORY_MB=4096 IP_CONFIG="10.0.0.50/24,gw=10.0.0.1" \
+  bash -c "$(curl -fsSL https://raw.githubusercontent.com/GrilTEK/resaprint/main/proxmox/install-resaprint-lxc.sh)"
+```
+
+Nginx Proxy Manager configuration and the first admin PIN are
+deliberately **not** automated (NPM setup is host-specific and the PIN
+should be something you choose) — both are printed as next steps when
+the script finishes.
+
+## Manual quick start (any Docker host)
 
 ```bash
 cp backend/.env.example backend/.env

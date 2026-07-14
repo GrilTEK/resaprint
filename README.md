@@ -40,7 +40,11 @@ flowchart LR
 
 ## Quick start
 
-- **Backend deploy**: see [`docs/BACKEND.md`](docs/BACKEND.md) — `docker compose up -d`, env vars, IMAP setup, parser field-mapping guide.
+- **Backend deploy on Proxmox (one command)**: run on the Proxmox host as root —
+  ```bash
+  bash -c "$(curl -fsSL https://raw.githubusercontent.com/GrilTEK/resaprint/main/proxmox/install-resaprint-lxc.sh)"
+  ```
+  Creates a new LXC, installs Docker, and starts the stack. See [`proxmox/install-resaprint-lxc.sh`](proxmox/install-resaprint-lxc.sh) for override variables and [`docs/BACKEND.md`](docs/BACKEND.md) for manual `docker compose` deploy, env vars, IMAP setup, and the parser field-mapping guide.
 - **Windows client install**: see [`docs/CLIENT.md`](docs/CLIENT.md) — download the release zip, run `install.ps1` as admin, pair the station.
 - **API reference**: see [`docs/API.md`](docs/API.md).
 
