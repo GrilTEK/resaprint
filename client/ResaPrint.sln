@@ -11,6 +11,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ResaPrint.Tray", "ResaPrint
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ResaPrint.Agent.Tests", "ResaPrint.Agent.Tests\ResaPrint.Agent.Tests.csproj", "{7C453C71-77BC-4EDF-8C95-E9DE6F447057}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ResaPrint.Installer", "ResaPrint.Installer\ResaPrint.Installer.csproj", "{568C1E0C-7B04-4230-93F4-21DBFD9294A0}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -33,6 +35,10 @@ Global
 		{7C453C71-77BC-4EDF-8C95-E9DE6F447057}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7C453C71-77BC-4EDF-8C95-E9DE6F447057}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{7C453C71-77BC-4EDF-8C95-E9DE6F447057}.Release|Any CPU.Build.0 = Release|Any CPU
+		{568C1E0C-7B04-4230-93F4-21DBFD9294A0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{568C1E0C-7B04-4230-93F4-21DBFD9294A0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{568C1E0C-7B04-4230-93F4-21DBFD9294A0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{568C1E0C-7B04-4230-93F4-21DBFD9294A0}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

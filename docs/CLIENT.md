@@ -2,7 +2,7 @@
 
 ## What gets installed
 
-Two Windows executables, both self-contained single-file `net8.0-windows`
+Three Windows executables, all self-contained single-file `net8.0-windows`
 `win-x64` builds (no .NET runtime needs to be pre-installed on the
 target machine):
 
@@ -16,6 +16,8 @@ target machine):
   logon via a Scheduled Task. It has no printing logic and no way to
   stop the Agent — closing or killing the tray icon has zero effect on
   the service.
+- **`ResaPrint.Installer.exe`** — an optional graphical setup wizard
+  (see below) as an alternative to running `install.ps1` by hand.
 
 ### What "cannot be closed" actually means
 
@@ -49,12 +51,43 @@ flowing**, because:
   and paired manually via the admin UI's Stations page if you prefer
   that route.
 
-## Install
+## Install (GUI — recommended)
 
 This machine is a normal Windows PC on the same LAN as the backend
 (the backend itself typically runs in a container on Proxmox
 elsewhere) — the Agent only needs network access to the backend's URL
 and a USB-connected receipt printer plugged into this PC.
+
+1. Download the release zip from the repo's Releases page and extract
+   it anywhere.
+2. Run **`ResaPrint.Installer.exe`** (it will prompt for administrator
+   elevation — installing a Windows Service requires it).
+3. In the window:
+   - Enter the **backend URL** (e.g. `http://192.168.1.50:8000`).
+   - Pick the **printer** from the dropdown (populated from Windows'
+     installed printers — no need to know the exact queue name).
+   - Click **Test Print** to confirm the printer is wired up correctly
+     before installing anything.
+   - Either enter the **admin PIN** (the installer creates and pairs a
+     new station named after this PC automatically), or switch to "I
+     already paired a station manually" and enter the **Station ID**
+     and **API key** from the admin UI's Stations page.
+   - Click **Install**. Progress and any errors show in the log box.
+
+`ResaPrint.Agent.exe` and `ResaPrint.Tray.exe` must be in the same
+folder as `ResaPrint.Installer.exe` (they ship together in the release
+zip) — the installer copies them into `%ProgramFiles%\ResaPrint\` and
+wires up the service/scheduled task itself, using the same
+`sc.exe`/`schtasks.exe` commands `install.ps1` uses under the hood.
+
+Re-running the installer is safe — it stops the existing service,
+replaces the binaries, and re-registers everything.
+
+## Install (PowerShell — scripted/repeat installs)
+
+Prefer a scriptable, non-interactive install (e.g. for rolling out to
+several PCs), or don't want to run a GUI exe? Use `install.ps1`
+instead — it does exactly the same steps as the GUI installer.
 
 1. Download the release zip from the repo's Releases page (built by
    `.github/workflows/client-release.yml` on every `client-v*` tag).

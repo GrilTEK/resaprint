@@ -1,8 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
-using ResaPrint.Shared;
 
-namespace ResaPrint.Agent;
+namespace ResaPrint.Shared;
 
 /// <summary>
 /// Sends raw ESC/POS bytes to a Windows-installed printer queue via
@@ -10,7 +9,10 @@ namespace ResaPrint.Agent;
 /// so the exact byte stream reaches the printer. This is the
 /// well-known P/Invoke pattern from Microsoft KB322090
 /// (RawPrinterHelper) — boring and widely referenced, appropriate
-/// given this runs unattended on hotel infrastructure.
+/// given this runs unattended on hotel infrastructure. Lives in Shared
+/// so both ResaPrint.Agent (the actual print loop) and
+/// ResaPrint.Installer (the "Test Print" button during setup) can use
+/// the same implementation.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class WinspoolPosPrinter : IPosPrinter
