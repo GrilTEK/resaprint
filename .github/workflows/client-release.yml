@@ -26,11 +26,23 @@ jobs:
       - name: Restore
         run: dotnet restore ResaPrint.sln
 
-      - name: Publish ResaPrint.Agent (self-contained, single-file, trimmed)
+      - name: Publish ResaPrint.Agent (self-contained, single-file)
+        # No PublishTrimmed: .NET's trimmer disables reflection-based
+        # JsonSerializer by default (IsReflectionEnabledByDefault=false
+        # under trimming), and DpapiConfigStore/ResaPrintApiClient use
+        # plain JsonSerializer.Serialize/Deserialize without a source
+        # generator — under trimming this throws
+        # "Reflection-based serialization has been disabled for this
+        # application" at runtime (confirmed on real hardware; dotnet
+        # build/test don't catch it since trimming only applies at
+        # publish time). Could be fixed with a JsonSerializerContext
+        # source generator instead, but skipping trimming is simpler
+        # and the size savings aren't worth the fragility for a small
+        # background service.
         run: >
           dotnet publish ResaPrint.Agent\ResaPrint.Agent.csproj
           -c Release -r win-x64 --self-contained true
-          -p:PublishSingleFile=true -p:PublishTrimmed=true
+          -p:PublishSingleFile=true
           -p:IncludeNativeLibrariesForSelfExtract=true
           -o out\agent
 
