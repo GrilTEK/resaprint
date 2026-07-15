@@ -5,17 +5,18 @@ from app.models.app_settings import AppSettings
 from app.models.print_station import PrintStation, StationConnectionType
 from app.models.reservation import Reservation
 from app.models.reservation_room_line import ReservationRoomLine
+from app.models.room import Room
 from app.services.escpos_builder import bold
 from app.services.printing import build_reservation_receipt
 
 
-def _station() -> PrintStation:
+def _station(paper_width_cols: int = 42) -> PrintStation:
     return PrintStation(
         name="Test",
         connection_type=StationConnectionType.lan_escpos,
         lan_host="192.0.2.1",
         lan_port=9100,
-        paper_width_cols=42,
+        paper_width_cols=paper_width_cols,
         codepage="cp437",
     )
 
@@ -38,23 +39,16 @@ def _reservation(**overrides) -> Reservation:
     return reservation
 
 
-def test_receipt_includes_avg_per_night_for_single_room_summary():
-    reservation = Reservation(
-        guest_name="Jane Doe",
-        source_channel="manual",
-        checkin=date(2026, 8, 1),
-        checkout=date(2026, 8, 3),
-        room_type="Double",
-        price_total=Decimal("200.00"),
-        price_currency="EUR",
-    )
-    reservation.room_lines = []
+def test_receipt_header_uses_source_channel():
+    text_summary, _ = build_reservation_receipt(_reservation(), _station())
 
-    text_summary, escpos_bytes = build_reservation_receipt(reservation, _station())
+    assert text_summary.startswith("BOOKING_COM_CUBILIS REZERVACIJA\n")
 
-    assert "Avg/night: EUR 100.00" in text_summary
-    assert b"Avg/night" in escpos_bytes
-    assert len(escpos_bytes) > 0
+
+def test_receipt_shows_total_as_skupaj():
+    text_summary, _ = build_reservation_receipt(_reservation(), _station())
+
+    assert "SKUPAJ: EUR 200.00" in text_summary
 
 
 def test_receipt_lists_every_room_line_not_just_first():
@@ -73,9 +67,10 @@ def test_receipt_lists_every_room_line_not_just_first():
 
     text_summary, _ = build_reservation_receipt(reservation, _station())
 
+    assert "Sobe:" in text_summary
     assert "Economy Double" in text_summary
     assert "Deluxe Suite" in text_summary
-    assert "Total: EUR 470.50" in text_summary
+    assert "SKUPAJ: EUR 470.50" in text_summary
 
 
 def test_receipt_falls_back_to_single_room_type_when_no_room_lines():
@@ -92,7 +87,26 @@ def test_receipt_falls_back_to_single_room_type_when_no_room_lines():
 
     text_summary, _ = build_reservation_receipt(reservation, _station())
 
-    assert "Room: Standard Single" in text_summary
+    assert "Sobe:" in text_summary
+    assert "Standard Single" in text_summary
+
+
+def test_receipt_shows_assigned_room_number():
+    reservation = Reservation(
+        guest_name="Jane Doe",
+        source_channel="manual",
+        checkin=date(2026, 8, 1),
+        checkout=date(2026, 8, 2),
+        room_type="Standard Single",
+        price_total=Decimal("80.00"),
+        price_currency="EUR",
+    )
+    reservation.room_lines = []
+    reservation.assigned_room = Room(room_number="101", category="Standard Single")
+
+    text_summary, _ = build_reservation_receipt(reservation, _station())
+
+    assert "Standard Single (Soba 101)" in text_summary
 
 
 def _app_settings(**overrides) -> AppSettings:
@@ -111,12 +125,10 @@ def _app_settings(**overrides) -> AppSettings:
     return AppSettings(**defaults)
 
 
-def test_receipt_shows_nights_guests_channel_by_default():
+def test_receipt_shows_nights_and_guests_combined_by_default():
     text_summary, _ = build_reservation_receipt(_reservation(), _station())
 
-    assert "Nights: 2" in text_summary
-    assert "Guests: 2 adults, 1 child" in text_summary
-    assert "Channel: booking_com_cubilis" in text_summary
+    assert "GOSTI: 3  |  NOČI: 2" in text_summary
 
 
 def test_receipt_hides_nights_guests_channel_when_disabled_in_settings():
@@ -124,9 +136,19 @@ def test_receipt_hides_nights_guests_channel_when_disabled_in_settings():
 
     text_summary, _ = build_reservation_receipt(_reservation(), _station(), app_settings)
 
-    assert "Nights:" not in text_summary
-    assert "Guests:" not in text_summary
-    assert "Channel:" not in text_summary
+    assert "GOSTI:" not in text_summary
+    assert "NOČI:" not in text_summary
+    assert text_summary.startswith("REZERVACIJA\n")
+    assert "BOOKING_COM_CUBILIS" not in text_summary
+
+
+def test_receipt_shows_only_nights_when_guests_disabled():
+    app_settings = _app_settings(receipt_show_guests=False)
+
+    text_summary, _ = build_reservation_receipt(_reservation(), _station(), app_settings)
+
+    assert "NOČI: 2" in text_summary
+    assert "GOSTI:" not in text_summary
 
 
 def test_receipt_applies_bold_labels_setting():
@@ -147,9 +169,18 @@ def test_receipt_applies_large_font_size_setting():
     assert text_size(2, 2) in escpos_bytes
 
 
-def test_receipt_guests_label_singular_forms():
-    text_summary, _ = build_reservation_receipt(
-        _reservation(guests_adults=1, guests_children=0), _station()
-    )
-    assert "Guests: 1 adult" in text_summary
-    assert "1 adults" not in text_summary
+def test_receipt_shows_reservation_number_or_dash():
+    text_summary, _ = build_reservation_receipt(_reservation(external_ref="12345"), _station())
+    assert "Reservation nr.: 12345" in text_summary
+
+    text_summary_no_ref, _ = build_reservation_receipt(_reservation(external_ref=None), _station())
+    assert "Reservation nr.: -" in text_summary_no_ref
+
+
+def test_receipt_wraps_long_room_names_on_narrow_paper():
+    reservation = _reservation(room_type="A Very Long Room Category Name Indeed")
+    reservation.room_lines = []
+
+    text_summary, _ = build_reservation_receipt(reservation, _station(paper_width_cols=20))
+
+    assert "  Category Name Indeed" in text_summary

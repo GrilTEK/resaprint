@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import textwrap
 from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,13 +14,14 @@ from app.models.reservation import Reservation
 from app.services.escpos_builder import ReceiptBuilder
 
 
-def _guests_label(reservation: Reservation) -> str:
-    adults = reservation.guests_adults
-    label = f"{adults} adult{'s' if adults != 1 else ''}"
-    if reservation.guests_children:
-        children = reservation.guests_children
-        label += f", {children} child{'ren' if children != 1 else ''}"
-    return label
+def _room_label(room_type: str, assigned_room) -> str:
+    if assigned_room is not None:
+        return f"{room_type} (Soba {assigned_room.room_number})"
+    return room_type
+
+
+def _wrap(text: str, width: int) -> list[str]:
+    return textwrap.wrap(text, width=width) or [text]
 
 
 def build_reservation_receipt(
@@ -27,8 +29,14 @@ def build_reservation_receipt(
     station: PrintStation,
     app_settings: AppSettings | None = None,
 ) -> tuple[str, bytes]:
+    """Layout modeled on the operator's previous standalone print
+    script: a source-channel title, "Gost/Sobe/From/To/GOSTI|NOČI"
+    body, then a dashed-divider "SKUPAJ" total and reservation number
+    footer — kept close to that familiar wording rather than the more
+    generic English labels used before."""
     width = station.paper_width_cols
     nights = max((reservation.checkout - reservation.checkin).days, 0)
+    guests = (reservation.guests_adults or 0) + (reservation.guests_children or 0)
 
     # app_settings is optional (defaults below) so existing callers/tests
     # that don't care about receipt layout customization keep working.
@@ -43,66 +51,73 @@ def build_reservation_receipt(
     builder.set_font(font)  # type: ignore[arg-type]
     if font_size == "large":
         builder.set_text_size(2, 2)
-    builder.align_center().bold_line("ResaPrint")
+
+    header = f"{reservation.source_channel.upper()} REZERVACIJA" if show_channel else "REZERVACIJA"
+    builder.align_center().bold_line(header)
     builder.divider(width)
     builder.align_left()
-    builder.kv_line("Guest:", reservation.guest_name, width=width)
-    builder.kv_line("Check-in:", reservation.checkin.isoformat(), width=width)
-    builder.kv_line("Check-out:", reservation.checkout.isoformat(), width=width)
-    if show_nights:
-        builder.kv_line("Nights:", str(nights), width=width)
-    if show_guests:
-        builder.kv_line("Guests:", _guests_label(reservation), width=width)
-    if show_channel:
-        builder.kv_line("Channel:", reservation.source_channel, width=width)
-    if reservation.external_ref:
-        builder.kv_line("Ref#:", reservation.external_ref, width=width)
 
-    text_lines = [
-        f"Guest: {reservation.guest_name}",
-        f"Check-in: {reservation.checkin.isoformat()}",
-        f"Check-out: {reservation.checkout.isoformat()}",
-    ]
-    if show_nights:
-        text_lines.append(f"Nights: {nights}")
-    if show_guests:
-        text_lines.append(f"Guests: {_guests_label(reservation)}")
-    if show_channel:
-        text_lines.append(f"Channel: {reservation.source_channel}")
-    text_lines.append(f"Ref#: {reservation.external_ref or '-'}")
+    text_lines = [header]
+    builder.kv_line("Gost:", reservation.guest_name, width=width)
+    text_lines.append(f"Gost: {reservation.guest_name}")
 
     if reservation.room_lines:
-        builder.divider(width)
+        builder.line("Sobe:")
+        text_lines.append("Sobe:")
         for line in reservation.room_lines:
-            room_label = line.room_type
-            if line.assigned_room is not None:
-                room_label += f" (Room {line.assigned_room.room_number})"
-            builder.line(room_label)
+            label = _room_label(line.room_type, line.assigned_room)
+            wrapped = _wrap(label, width)
+            builder.line(wrapped[0])
+            text_lines.append(wrapped[0])
+            for cont in wrapped[1:]:
+                builder.line(f"  {cont}")
+                text_lines.append(f"  {cont}")
             if line.nights is not None:
                 builder.kv_line("  Nights:", str(line.nights), width=width)
+                text_lines.append(f"  Nights: {line.nights}")
             if line.price_per_night is not None:
                 builder.kv_line("  Per night:", f"{reservation.price_currency} {line.price_per_night}", width=width)
+                text_lines.append(f"  Per night: {reservation.price_currency} {line.price_per_night}")
             if line.price_total is not None:
                 builder.kv_line("  Line total:", f"{reservation.price_currency} {line.price_total}", width=width)
-            text_lines.append(
-                f"Room: {room_label} | nights={line.nights or '-'} "
-                f"per_night={line.price_per_night or '-'} total={line.price_total or '-'}"
-            )
+                text_lines.append(f"  Line total: {reservation.price_currency} {line.price_total}")
     elif reservation.room_type:
-        room_label = reservation.room_type
-        if reservation.assigned_room is not None:
-            room_label += f" (Room {reservation.assigned_room.room_number})"
-        builder.kv_line("Room:", room_label, width=width)
-        text_lines.append(f"Room: {room_label}")
+        label = _room_label(reservation.room_type, reservation.assigned_room)
+        builder.line("Sobe:")
+        text_lines.append("Sobe:")
+        wrapped = _wrap(label, width)
+        builder.line(wrapped[0])
+        text_lines.append(wrapped[0])
+        for cont in wrapped[1:]:
+            builder.line(f"  {cont}")
+            text_lines.append(f"  {cont}")
 
+    builder.kv_line("From:", reservation.checkin.isoformat(), width=width)
+    builder.kv_line("To:", reservation.checkout.isoformat(), width=width)
+    text_lines.append(f"From: {reservation.checkin.isoformat()}")
+    text_lines.append(f"To: {reservation.checkout.isoformat()}")
+
+    if show_guests and show_nights:
+        summary_line = f"GOSTI: {guests}  |  NOČI: {nights}"
+    elif show_guests:
+        summary_line = f"GOSTI: {guests}"
+    elif show_nights:
+        summary_line = f"NOČI: {nights}"
+    else:
+        summary_line = None
+    if summary_line:
+        builder.line(summary_line)
+        text_lines.append(summary_line)
+
+    builder.divider(width)
+    text_lines.append("-" * width)
     if reservation.price_total is not None:
+        builder.kv_line("SKUPAJ:", f"{reservation.price_currency} {reservation.price_total}", width=width)
+        text_lines.append(f"SKUPAJ: {reservation.price_currency} {reservation.price_total}")
         builder.divider(width)
-        builder.kv_line("Total:", f"{reservation.price_currency} {reservation.price_total}", width=width)
-        text_lines.append(f"Total: {reservation.price_currency} {reservation.price_total}")
-        if nights > 0:
-            avg_per_night = reservation.price_total / nights
-            builder.kv_line("Avg/night:", f"{reservation.price_currency} {avg_per_night:.2f}", width=width)
-            text_lines.append(f"Avg/night: {reservation.price_currency} {avg_per_night:.2f}")
+        text_lines.append("-" * width)
+    builder.kv_line("Reservation nr.:", reservation.external_ref or "-", width=width)
+    text_lines.append(f"Reservation nr.: {reservation.external_ref or '-'}")
 
     builder.divider(width)
     builder.line(f"Printed {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
