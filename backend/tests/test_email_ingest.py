@@ -6,8 +6,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit_log import AuditLog
+from app.models.print_job import PrintJob
+from app.models.print_station import PrintStation, StationConnectionType
 from app.models.reservation import Reservation
 from app.services import email_ingest
+from app.services.app_settings import get_or_create_settings
 from app.services.email_ingest import FetchedEmail, ImapConnectionInfo, _decode_subject, _extract_body, _process_email
 from app.services.parser_registry import ParserRegistry
 from app.services.parsers.reference_booking_com import ReferenceBookingComParser
@@ -102,6 +105,86 @@ async def test_process_email_logs_unparsed_when_required_field_missing(db_sessio
     result = await db_session.execute(select(Reservation))
     assert result.scalars().all() == []
     assert calls == [("seen", b"3")]
+
+
+@pytest.mark.asyncio
+async def test_process_email_auto_prints_when_enabled(db_session: AsyncSession, monkeypatch):
+    monkeypatch.setattr(email_ingest, "_mark_processed_sync", lambda conn, uid: None)
+    monkeypatch.setattr(email_ingest, "_mark_seen_sync", lambda conn, uid: None)
+
+    station = PrintStation(name="Front Desk", connection_type=StationConnectionType.usb_agent)
+    db_session.add(station)
+    await db_session.flush()
+
+    app_settings = await get_or_create_settings(db_session)
+    app_settings.auto_print_enabled = True
+    app_settings.auto_print_station_id = station.id
+    await db_session.commit()
+
+    registry = ParserRegistry([ReferenceBookingComParser()])
+    fetched = FetchedEmail(uid=b"10", subject=MATCHING_SUBJECT, body=MATCHING_BODY, content_type="text/plain")
+    await _process_email(db_session, registry, fetched, TEST_CONN_INFO)
+
+    jobs = (await db_session.execute(select(PrintJob))).scalars().all()
+    assert len(jobs) == 1
+    assert jobs[0].station_id == station.id
+    assert jobs[0].requested_by == "system (auto-print)"
+
+    audit_result = await db_session.execute(select(AuditLog).where(AuditLog.action == "print_job.auto_printed"))
+    assert len(audit_result.scalars().all()) == 1
+
+
+@pytest.mark.asyncio
+async def test_process_email_does_not_auto_print_when_disabled(db_session: AsyncSession, monkeypatch):
+    monkeypatch.setattr(email_ingest, "_mark_processed_sync", lambda conn, uid: None)
+    monkeypatch.setattr(email_ingest, "_mark_seen_sync", lambda conn, uid: None)
+
+    station = PrintStation(name="Front Desk", connection_type=StationConnectionType.usb_agent)
+    db_session.add(station)
+    await db_session.flush()
+    # auto_print_enabled left at its default (False) — station set but disabled.
+    app_settings = await get_or_create_settings(db_session)
+    app_settings.auto_print_station_id = station.id
+    await db_session.commit()
+
+    registry = ParserRegistry([ReferenceBookingComParser()])
+    fetched = FetchedEmail(uid=b"11", subject=MATCHING_SUBJECT, body=MATCHING_BODY, content_type="text/plain")
+    await _process_email(db_session, registry, fetched, TEST_CONN_INFO)
+
+    jobs = (await db_session.execute(select(PrintJob))).scalars().all()
+    assert jobs == []
+
+
+@pytest.mark.asyncio
+async def test_process_email_auto_print_skips_when_station_inactive(db_session: AsyncSession, monkeypatch):
+    monkeypatch.setattr(email_ingest, "_mark_processed_sync", lambda conn, uid: None)
+    monkeypatch.setattr(email_ingest, "_mark_seen_sync", lambda conn, uid: None)
+
+    station = PrintStation(name="Front Desk", connection_type=StationConnectionType.usb_agent, is_active=False)
+    db_session.add(station)
+    await db_session.flush()
+
+    app_settings = await get_or_create_settings(db_session)
+    app_settings.auto_print_enabled = True
+    app_settings.auto_print_station_id = station.id
+    await db_session.commit()
+
+    registry = ParserRegistry([ReferenceBookingComParser()])
+    fetched = FetchedEmail(uid=b"12", subject=MATCHING_SUBJECT, body=MATCHING_BODY, content_type="text/plain")
+    await _process_email(db_session, registry, fetched, TEST_CONN_INFO)
+
+    jobs = (await db_session.execute(select(PrintJob))).scalars().all()
+    assert jobs == []
+
+    audit_result = await db_session.execute(
+        select(AuditLog).where(AuditLog.action == "print_job.auto_print_skipped")
+    )
+    assert len(audit_result.scalars().all()) == 1
+
+    # The reservation itself must still be created — a bad auto-print
+    # config should never block ingestion.
+    reservations = (await db_session.execute(select(Reservation))).scalars().all()
+    assert len(reservations) == 1
 
 
 @pytest.mark.asyncio

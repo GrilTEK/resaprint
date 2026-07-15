@@ -40,7 +40,11 @@ def _config_out(row) -> ConfigOut:
         imap_folder=row.imap_folder,
         imap_processed_folder=row.imap_processed_folder,
         imap_poll_seconds=row.imap_poll_seconds,
+        auto_print_enabled=row.auto_print_enabled,
+        auto_print_station_id=row.auto_print_station_id,
     )
+
+
 _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
@@ -390,7 +394,12 @@ async def settings_page(
     admin: AdminPin = Depends(require_admin_session_html),
 ):
     row = await get_or_create_settings(db)
-    return templates.TemplateResponse(request, "settings.html", {"admin": admin, "config": _config_out(row), "saved": False})
+    stations = (
+        await db.execute(select(PrintStation).where(PrintStation.is_active.is_(True)).order_by(PrintStation.name))
+    ).scalars().all()
+    return templates.TemplateResponse(
+        request, "settings.html", {"admin": admin, "config": _config_out(row), "stations": stations, "saved": False}
+    )
 
 
 @router.post("/settings")
@@ -403,6 +412,8 @@ async def settings_update_action(
     imap_folder: str = Form(default="INBOX"),
     imap_processed_folder: str = Form(default="Processed"),
     imap_poll_seconds: int = Form(default=60),
+    auto_print_enabled: bool = Form(default=False),
+    auto_print_station_id: str = Form(default=""),
     db: AsyncSession = Depends(get_db),
     admin: AdminPin = Depends(require_admin_session_html),
 ):
@@ -416,8 +427,16 @@ async def settings_update_action(
     if imap_password:
         row.imap_password_encrypted = encrypt(imap_password)
 
+    row.auto_print_enabled = auto_print_enabled
+    row.auto_print_station_id = int(auto_print_station_id) if auto_print_station_id else None
+
     await audit.log(db, actor=admin.label, action="config.updated", entity_type="app_settings", entity_id=row.id)
     await db.commit()
     await db.refresh(row)
 
-    return templates.TemplateResponse(request, "settings.html", {"admin": admin, "config": _config_out(row), "saved": True})
+    stations = (
+        await db.execute(select(PrintStation).where(PrintStation.is_active.is_(True)).order_by(PrintStation.name))
+    ).scalars().all()
+    return templates.TemplateResponse(
+        request, "settings.html", {"admin": admin, "config": _config_out(row), "stations": stations, "saved": True}
+    )

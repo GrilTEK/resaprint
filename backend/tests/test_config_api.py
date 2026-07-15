@@ -15,6 +15,39 @@ async def test_get_config_seeds_defaults_on_first_access(authed_client: AsyncCli
     body = response.json()
     assert body["imap_folder"] == "INBOX"
     assert body["imap_has_password"] is False
+    assert body["auto_print_enabled"] is False
+    assert body["auto_print_station_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_patch_config_sets_auto_print_station(authed_client: AsyncClient):
+    station_resp = await authed_client.post(
+        "/api/v1/stations", json={"name": "Front Desk", "connection_type": "usb_agent"}
+    )
+    station_id = station_resp.json()["id"]
+
+    response = await authed_client.patch(
+        "/api/v1/config", json={"auto_print_enabled": True, "auto_print_station_id": station_id}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["auto_print_enabled"] is True
+    assert body["auto_print_station_id"] == station_id
+
+
+@pytest.mark.asyncio
+async def test_patch_config_can_disable_auto_print(authed_client: AsyncClient):
+    station_resp = await authed_client.post(
+        "/api/v1/stations", json={"name": "Front Desk", "connection_type": "usb_agent"}
+    )
+    station_id = station_resp.json()["id"]
+    await authed_client.patch(
+        "/api/v1/config", json={"auto_print_enabled": True, "auto_print_station_id": station_id}
+    )
+
+    response = await authed_client.patch("/api/v1/config", json={"auto_print_enabled": False})
+    assert response.status_code == 200
+    assert response.json()["auto_print_enabled"] is False
 
 
 @pytest.mark.asyncio

@@ -3,10 +3,10 @@
 {% block content %}
 <h1>Settings</h1>
 
-<div class="card">
-  <h2>IMAP (incoming reservation mailbox)</h2>
-  {% if saved %}<p style="color: var(--accent);">Saved.</p>{% endif %}
-  <form hx-post="/settings" hx-target="body">
+<form hx-post="/settings" hx-target="body">
+  <div class="card">
+    <h2>IMAP (incoming reservation mailbox)</h2>
+    {% if saved %}<p style="color: var(--accent);">Saved.</p>{% endif %}
     <div class="form-row">
       <label>Host</label>
       <input type="text" name="imap_host" value="{{ config.imap_host or '' }}" placeholder="imap.example.com">
@@ -35,11 +35,39 @@
       <label>Poll interval (seconds)</label>
       <input type="number" name="imap_poll_seconds" value="{{ config.imap_poll_seconds }}">
     </div>
-    <button type="submit">Save</button>
-  </form>
-  <p style="color: #666; font-size: 0.85rem;">
-    Changes take effect on the ingest-worker's next poll cycle — no restart needed.
-    The password is encrypted at rest and never shown back once set.
-  </p>
-</div>
+    <p style="color: #666; font-size: 0.85rem;">
+      Changes take effect on the ingest-worker's next poll cycle — no restart needed.
+      The password is encrypted at rest and never shown back once set.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Auto-print</h2>
+    <p style="color: #666; font-size: 0.85rem;">
+      If enabled, every successfully-parsed incoming reservation is printed
+      automatically to the selected station — no manual "Print now" click
+      needed. Leave off to only print manually from the Reservations page.
+    </p>
+    <div class="form-row">
+      <label>
+        <input type="checkbox" name="auto_print_enabled" {% if config.auto_print_enabled %}checked{% endif %} style="width: auto;">
+        Auto-print new reservations
+      </label>
+    </div>
+    <div class="form-row">
+      <label>Station</label>
+      <select name="auto_print_station_id">
+        <option value="">(none — auto-print disabled)</option>
+        {% for s in stations %}
+        <option value="{{ s.id }}" {% if config.auto_print_station_id == s.id %}selected{% endif %}>{{ s.name }} ({{ s.connection_type.value }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% if not stations %}
+    <p class="error-text">No active print stations yet — add one on the Stations page first.</p>
+    {% endif %}
+  </div>
+
+  <button type="submit">Save</button>
+</form>
 {% endblock %}

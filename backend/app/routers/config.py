@@ -20,6 +20,8 @@ def _to_out(row) -> ConfigOut:
         imap_folder=row.imap_folder,
         imap_processed_folder=row.imap_processed_folder,
         imap_poll_seconds=row.imap_poll_seconds,
+        auto_print_enabled=row.auto_print_enabled,
+        auto_print_station_id=row.auto_print_station_id,
     )
 
 

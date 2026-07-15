@@ -9,6 +9,8 @@ class ConfigOut(BaseModel):
     imap_folder: str
     imap_processed_folder: str
     imap_poll_seconds: int
+    auto_print_enabled: bool
+    auto_print_station_id: int | None
 
 
 class ConfigUpdate(BaseModel):
@@ -19,3 +21,5 @@ class ConfigUpdate(BaseModel):
     imap_folder: str | None = None
     imap_processed_folder: str | None = None
     imap_poll_seconds: int | None = None
+    auto_print_enabled: bool | None = None
+    auto_print_station_id: int | None = None

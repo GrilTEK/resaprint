@@ -29,9 +29,10 @@ from sqlalchemy.orm import selectinload
 
 from app.db import async_session_maker
 from app.models.parser_mapping import ParserFieldMapping
+from app.models.print_station import PrintStation
 from app.models.reservation import Reservation, ReservationStatus
 from app.models.reservation_room_line import ReservationRoomLine
-from app.services import audit
+from app.services import audit, printing
 from app.services.app_settings import get_or_create_settings
 from app.services.crypto import decrypt
 from app.services.parser_registry import GenericFieldMappingParser, ParserError, ParserRegistry
@@ -241,8 +242,61 @@ async def _process_email(
     )
     await db.commit()
 
+    await _maybe_auto_print(db, reservation)
+
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, _mark_processed_sync, conn_info, fetched.uid)
+
+
+async def _maybe_auto_print(db: AsyncSession, reservation: Reservation) -> None:
+    """If enabled in Settings, print a newly-ingested reservation to
+    the configured default station automatically — no "Print now"
+    click needed. Printing failures are logged but never block
+    ingestion; the reservation stays available for a manual print."""
+    app_settings = await get_or_create_settings(db)
+    if not app_settings.auto_print_enabled or app_settings.auto_print_station_id is None:
+        return
+
+    station = await db.get(PrintStation, app_settings.auto_print_station_id)
+    if station is None or not station.is_active:
+        await audit.log(
+            db,
+            actor="system",
+            action="print_job.auto_print_skipped",
+            entity_type="reservation",
+            entity_id=reservation.id,
+            detail={"reason": "auto-print station missing or inactive"},
+        )
+        await db.commit()
+        return
+
+    try:
+        # room_lines may never have been touched in-memory if the parser
+        # produced none (the loop that appends them simply never ran) —
+        # explicitly (and async-safely) load it before the sync
+        # build_reservation_receipt call accesses it, otherwise SQLAlchemy
+        # attempts a lazy load outside of a greenlet context and crashes.
+        await db.refresh(reservation, attribute_names=["room_lines"])
+        text_summary, escpos_bytes = printing.build_reservation_receipt(reservation, station)
+        job = await printing.enqueue_print_job(
+            db,
+            station=station,
+            reservation=reservation,
+            payload_text=text_summary,
+            escpos_bytes=escpos_bytes,
+            requested_by="system (auto-print)",
+        )
+        await audit.log(
+            db,
+            actor="system",
+            action="print_job.auto_printed",
+            entity_type="print_job",
+            entity_id=job.id,
+            detail={"reservation_id": reservation.id, "station_id": station.id},
+        )
+        await db.commit()
+    except Exception:
+        logger.exception("auto-print failed for reservation id=%s", reservation.id)
 
 
 async def poll_once() -> int:
