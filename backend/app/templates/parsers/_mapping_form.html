@@ -56,7 +56,12 @@
     produces one line item per match instead of only the first one.
     Required group: <code>(?P&lt;room_type&gt;...)</code>. Optional:
     <code>(?P&lt;nights&gt;...)</code>, <code>(?P&lt;price_per_night&gt;...)</code>,
-    <code>(?P&lt;price_total&gt;...)</code>.
+    <code>(?P&lt;price_total&gt;...)</code>. If your pattern has no
+    <code>nights</code> group (most emails only state the stay's
+    overall arrival/departure once, not per room), each line
+    automatically gets the reservation's own checkout minus checkin —
+    no need to capture it per line unless a room's stay actually
+    differs from the rest.
   </p>
   <form hx-post="/parsers/{{ mapping.id }}/room-line-pattern" hx-target="body">
     <div class="form-row">

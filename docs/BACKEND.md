@@ -190,7 +190,12 @@ one regex with named groups, matched repeatedly (`re.finditer`, not
 
 - Required group: `(?P<room_type>...)`
 - Optional groups: `(?P<nights>...)`, `(?P<price_per_night>...)`,
-  `(?P<price_total>...)`
+  `(?P<price_total>...)`. If the pattern has no `nights` group (the
+  common case — most emails state the stay's dates once, not per
+  room), each line's nights defaults to the reservation's own
+  checkout minus checkin. Only bother capturing `(?P<nights>...)`
+  yourself for the rare booking where one room's stay genuinely
+  differs from the others.
 
 Example, for an email with repeated blocks like:
 ```

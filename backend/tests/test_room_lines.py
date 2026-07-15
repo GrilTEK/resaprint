@@ -154,3 +154,56 @@ def test_room_line_missing_room_type_group_is_skipped():
     body = "Guest name: Jane Doe\nArrival: 2026-01-01\nDeparture: 2026-01-02\nType: \n"
     result = parser.parse("subject", body, "text/plain")
     assert result.room_lines == []
+
+
+def test_room_line_nights_auto_computed_from_checkin_checkout_when_pattern_has_no_nights_group():
+    # ROOM_LINE_PATTERN (the real Booking.com pattern) has no
+    # (?P<nights>...) group at all — nights should still land on the
+    # room line, computed from the reservation's own Arrival/Departure.
+    mapping = _mapping_with_room_lines(
+        ROOM_LINE_PATTERN, [_guest_name_field(), _checkin_field(), _checkout_field()]
+    )
+    parser = GenericFieldMappingParser(mapping)
+
+    result = parser.parse("Fwd: New reservation via Booking.com", REAL_SINGLE_ROOM_BODY, "text/plain")
+
+    assert result.checkin.isoformat() == "2026-07-21"
+    assert result.checkout.isoformat() == "2026-07-22"
+    assert result.room_lines[0].nights == 1
+
+
+def test_every_room_line_gets_same_auto_computed_nights_for_multi_room_booking():
+    mapping = _mapping_with_room_lines(
+        ROOM_LINE_PATTERN, [_guest_name_field(), _checkin_field(), _checkout_field()]
+    )
+    mapping.fields[0].pattern = r"^Guest name:\s*(.+)$"
+    parser = GenericFieldMappingParser(mapping)
+
+    body_with_guest_name = TWO_ROOM_BODY + "Guest name: jane doe\n"
+    result = parser.parse("New reservation via Booking.com", body_with_guest_name, "text/plain")
+
+    assert result.checkin.isoformat() == "2026-08-01"
+    assert result.checkout.isoformat() == "2026-08-03"
+    assert result.room_lines[0].nights == 2
+    assert result.room_lines[1].nights == 2
+
+
+def test_explicit_nights_group_overrides_the_auto_computed_default():
+    pattern = (
+        r"^Type:\s*(?P<room_type>.+)$\n(?:.*\n)*?^Nights:\s*(?P<nights>\d+)$\n"
+        r"(?:.*\n)*?^Guest:.*?Price:\s*(?P<price_total>[\d.]+)"
+    )
+    mapping = _mapping_with_room_lines(pattern, [_guest_name_field(), _checkin_field(), _checkout_field()])
+    parser = GenericFieldMappingParser(mapping)
+
+    body = (
+        "Guest name: Jane Doe\n"
+        "Arrival: 2026-08-01\n"
+        "Departure: 2026-08-05\n"
+        "Type: Split-stay Suite\n"
+        "Nights: 1\n"
+        "Guest: jane doePrice: 90.00\n"
+    )
+    result = parser.parse("subject", body, "text/plain")
+
+    assert result.room_lines[0].nights == 1

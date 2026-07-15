@@ -91,15 +91,29 @@ class GenericFieldMappingParser:
             values[field.target_field] = _apply_transform(raw_value, field.transform)
 
         values.setdefault("source_channel", self._mapping.profile_slug)
-        values["room_lines"] = self._extract_room_lines(raw_body)
+
+        default_nights = None
+        checkin, checkout = values.get("checkin"), values.get("checkout")
+        if isinstance(checkin, date) and isinstance(checkout, date):
+            default_nights = max((checkout - checkin).days, 0)
+
+        values["room_lines"] = self._extract_room_lines(raw_body, default_nights)
         return ParsedReservation.model_validate(values)
 
-    def _extract_room_lines(self, raw_body: str) -> list[RoomLineDTO]:
+    def _extract_room_lines(self, raw_body: str, default_nights: int | None = None) -> list[RoomLineDTO]:
         """Room lines are optional: one regex with named groups
         (?P<room_type>...), (?P<nights>...), (?P<price_per_night>...),
         (?P<price_total>...), applied with re.finditer so a reservation
         covering multiple room types/rates produces one RoomLineDTO per
-        match instead of only the first one being kept."""
+        match instead of only the first one being kept.
+
+        `(?P<nights>...)` is itself optional — most emails only state
+        the overall check-in/check-out dates once, not per room line —
+        so when the pattern doesn't capture it (or the room_line_pattern
+        has no such group at all), each line falls back to
+        default_nights, computed from the reservation's own checkin/
+        checkout. An explicit per-line match still wins over that
+        fallback, for the rarer case of a genuinely split stay."""
         pattern = self._mapping.room_line_pattern
         if not pattern:
             return []
@@ -120,6 +134,9 @@ class GenericFieldMappingParser:
                     parsed[key] = int(raw_value.strip()) if key == "nights" else _apply_transform(raw_value, transform)
                 except (ValueError, ParserError):
                     continue
+
+            if "nights" not in parsed and default_nights is not None:
+                parsed["nights"] = default_nights
 
             lines.append(RoomLineDTO.model_validate(parsed))
 
