@@ -62,3 +62,8 @@ class ReservationUpdate(BaseModel):
 
 class PrintRequest(BaseModel):
     station_id: int
+
+
+class AssignRoomRequest(BaseModel):
+    room_id: int | None
+    room_line_id: int | None = None

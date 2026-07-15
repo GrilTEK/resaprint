@@ -2,13 +2,20 @@
 {% block title %}Reservations — ResaPrint{% endblock %}
 {% block content %}
 <h1>Reservations</h1>
+
+<form method="get" action="/reservations" class="form-row" style="margin-bottom: 1rem;">
+  <input type="text" name="q" value="{{ q }}" placeholder="Search guest, email, phone, ref#, room type...">
+  <button type="submit">Search</button>
+  {% if q %}<a href="/reservations">Clear</a>{% endif %}
+</form>
+
 <table>
   <thead><tr><th>Guest</th><th>Check-in</th><th>Check-out</th><th>Channel</th><th>Status</th><th></th></tr></thead>
   <tbody>
     {% for r in reservations %}
     {% include "reservations/_row.html" %}
     {% else %}
-    <tr><td colspan="6">No reservations yet.</td></tr>
+    <tr><td colspan="6">No reservations found.</td></tr>
     {% endfor %}
   </tbody>
 </table>

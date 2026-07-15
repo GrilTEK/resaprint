@@ -1,7 +1,7 @@
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -10,7 +10,9 @@ from app.models.admin_pin import AdminPin
 from app.models.print_station import PrintStation
 from app.models.reservation import Reservation, ReservationStatus
 from app.models.reservation_room_line import ReservationRoomLine
+from app.models.room import Room
 from app.schemas.reservation import (
+    AssignRoomRequest,
     PrintRequest,
     ReservationCreate,
     ReservationOut,
@@ -29,6 +31,7 @@ async def list_reservations(
     source_channel: str | None = None,
     checkin_from: date | None = None,
     checkin_to: date | None = None,
+    q: str | None = None,
     db: AsyncSession = Depends(get_db),
     _admin: AdminPin = Depends(require_admin_session),
 ) -> list[Reservation]:
@@ -41,6 +44,17 @@ async def list_reservations(
         query = query.where(Reservation.checkin >= checkin_from)
     if checkin_to is not None:
         query = query.where(Reservation.checkin <= checkin_to)
+    if q:
+        like = f"%{q}%"
+        query = query.where(
+            or_(
+                Reservation.guest_name.ilike(like),
+                Reservation.guest_email.ilike(like),
+                Reservation.guest_phone.ilike(like),
+                Reservation.external_ref.ilike(like),
+                Reservation.room_type.ilike(like),
+            )
+        )
 
     result = await db.execute(query)
     return list(result.scalars().all())
@@ -187,6 +201,52 @@ async def reassign_room(
     await reassign_rooms_for_reservation(db, reservation)
     await audit.log(
         db, actor=admin.label, action="reservation.room_reassigned", entity_type="reservation", entity_id=reservation.id
+    )
+    await db.commit()
+    await db.refresh(reservation)
+    return reservation
+
+
+@router.post("/{reservation_id}/assign-room", response_model=ReservationOut)
+async def assign_room_manually(
+    reservation_id: int,
+    payload: AssignRoomRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_session),
+) -> Reservation:
+    """Manually set (or clear, with room_id=null) the assigned room —
+    an explicit operator override that bypasses the availability
+    check the automatic assigner uses, e.g. for overbooking or manual
+    replanning. Targets a specific room line via room_line_id for
+    multi-room bookings; otherwise the reservation itself."""
+    reservation = (
+        await db.execute(
+            select(Reservation).options(selectinload(Reservation.room_lines)).where(Reservation.id == reservation_id)
+        )
+    ).scalar_one_or_none()
+    if reservation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="reservation not found")
+
+    if payload.room_id is not None:
+        room = await db.get(Room, payload.room_id)
+        if room is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="room not found")
+
+    if payload.room_line_id is not None:
+        line = next((line for line in reservation.room_lines if line.id == payload.room_line_id), None)
+        if line is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="room line not found on this reservation")
+        line.assigned_room_id = payload.room_id
+    else:
+        reservation.assigned_room_id = payload.room_id
+
+    await audit.log(
+        db,
+        actor=admin.label,
+        action="reservation.room_assigned_manually",
+        entity_type="reservation",
+        entity_id=reservation.id,
+        detail={"room_id": payload.room_id, "room_line_id": payload.room_line_id},
     )
     await db.commit()
     await db.refresh(reservation)

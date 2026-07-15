@@ -360,14 +360,26 @@ public sealed class InstallerForm : Form
         if (queryExit != 0)
         {
             AppendLog("Creating ResaPrintAgent service...");
+            // start= delayed-auto + depend= Spooler: at boot, a plain
+            // auto-start service can launch before the Print Spooler
+            // service is ready, making the first print attempt fail.
+            // Delayed-auto plus the explicit dependency makes Windows
+            // wait for Spooler first, so printing keeps working after
+            // every reboot with nobody logged in (obj= LocalSystem is
+            // what allows that — no interactive session required).
             var (createExit, createOutput) = await RunProcessAsync(
-                "sc.exe", $"create ResaPrintAgent binPath= \"{destAgentExe}\" start= auto obj= LocalSystem");
+                "sc.exe", $"create ResaPrintAgent binPath= \"{destAgentExe}\" start= delayed-auto obj= LocalSystem depend= Spooler");
             AppendLog(createOutput.Trim());
             if (createExit != 0)
             {
                 throw new InvalidOperationException("Creating the Windows Service failed — see the log above. Are you running this installer as Administrator?");
             }
             await RunProcessAsync("sc.exe", "description ResaPrintAgent \"ResaPrint receipt printing agent\"");
+        }
+        else
+        {
+            AppendLog("Updating existing ResaPrintAgent service startup settings...");
+            await RunProcessAsync("sc.exe", "config ResaPrintAgent start= delayed-auto depend= Spooler");
         }
 
         AppendLog("Configuring service recovery (auto-restart on failure)...");

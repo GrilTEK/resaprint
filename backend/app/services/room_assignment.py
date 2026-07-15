@@ -112,6 +112,34 @@ async def assign_rooms_for_reservation(db: AsyncSession, reservation: Reservatio
             reservation.assigned_room_id = room.id
 
 
+async def rooms_occupied_on_date(db: AsyncSession, target_date: date) -> dict[int, str]:
+    """Room id -> guest name occupying it on target_date, for display
+    purposes (e.g. the arrivals sheet's room-assignment dropdown) —
+    not the authoritative overlap check assignment itself uses."""
+    reservation_query = select(Reservation.assigned_room_id, Reservation.guest_name).where(
+        Reservation.assigned_room_id.is_not(None),
+        Reservation.status != ReservationStatus.cancelled,
+        Reservation.checkin <= target_date,
+        Reservation.checkout > target_date,
+    )
+    room_line_query = (
+        select(ReservationRoomLine.assigned_room_id, Reservation.guest_name)
+        .join(Reservation, Reservation.id == ReservationRoomLine.reservation_id)
+        .where(
+            ReservationRoomLine.assigned_room_id.is_not(None),
+            Reservation.status != ReservationStatus.cancelled,
+            Reservation.checkin <= target_date,
+            Reservation.checkout > target_date,
+        )
+    )
+    occupied: dict[int, str] = {}
+    for room_id, guest_name in (await db.execute(reservation_query)).all():
+        occupied[room_id] = guest_name
+    for room_id, guest_name in (await db.execute(room_line_query)).all():
+        occupied[room_id] = guest_name
+    return occupied
+
+
 async def reassign_rooms_for_reservation(db: AsyncSession, reservation: Reservation) -> None:
     """Clear any existing assignment and re-run auto-assignment — used
     by the manual "Reassign" action, e.g. after adding new rooms or

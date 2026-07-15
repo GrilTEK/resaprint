@@ -1,10 +1,10 @@
 import secrets
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.templating import Jinja2Templates
 from passlib.context import CryptContext
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -19,7 +19,7 @@ from app.models.parser_mapping import (
 )
 from app.models.print_job import PrintJob
 from app.models.print_station import PrintStation, StationConnectionType
-from app.models.reservation import Reservation
+from app.models.reservation import Reservation, ReservationStatus
 from app.models.reservation_room_line import ReservationRoomLine
 from app.models.room import Room
 from app.schemas.config import config_out_from_row
@@ -29,7 +29,7 @@ from app.services.app_settings import get_or_create_settings
 from app.services.auth_service import hash_pin
 from app.services.crypto import encrypt
 from app.services.parser_registry import GenericFieldMappingParser
-from app.services.room_assignment import reassign_rooms_for_reservation
+from app.services.room_assignment import reassign_rooms_for_reservation, rooms_occupied_on_date
 
 router = APIRouter(tags=["admin-ui"])
 templates = Jinja2Templates(directory="app/templates")
@@ -65,11 +65,144 @@ async def dashboard(
 @router.get("/reservations")
 async def reservations_page(
     request: Request,
+    q: str = "",
     db: AsyncSession = Depends(get_db),
     admin: AdminPin = Depends(require_admin_session_html),
 ):
-    reservations = (await db.execute(select(Reservation).order_by(Reservation.created_at.desc()))).scalars().all()
-    return templates.TemplateResponse(request, "reservations/list.html", {"admin": admin, "reservations": reservations})
+    query = select(Reservation).order_by(Reservation.created_at.desc())
+    if q:
+        like = f"%{q}%"
+        query = query.where(
+            or_(
+                Reservation.guest_name.ilike(like),
+                Reservation.guest_email.ilike(like),
+                Reservation.guest_phone.ilike(like),
+                Reservation.external_ref.ilike(like),
+                Reservation.room_type.ilike(like),
+            )
+        )
+    reservations = (await db.execute(query)).scalars().all()
+    return templates.TemplateResponse(
+        request, "reservations/list.html", {"admin": admin, "reservations": reservations, "q": q}
+    )
+
+
+def _sheet_rows(reservations: list[Reservation]) -> list[dict]:
+    """Flattens each reservation into one row per room line (or a
+    single virtual row using the legacy room_type field, for
+    reservations with no room lines) so the sheet can show/assign a
+    room per booked unit rather than per reservation."""
+    rows = []
+    for r in reservations:
+        if r.room_lines:
+            for line in r.room_lines:
+                rows.append(
+                    {
+                        "reservation": r,
+                        "room_line_id": line.id,
+                        "category": line.room_type,
+                        "assigned_room": line.assigned_room,
+                    }
+                )
+        else:
+            rows.append(
+                {"reservation": r, "room_line_id": None, "category": r.room_type, "assigned_room": r.assigned_room}
+            )
+    return rows
+
+
+async def _sheet_context(db: AsyncSession, admin: AdminPin, sheet_date: date) -> dict:
+    reservations = (
+        await db.execute(
+            select(Reservation)
+            .options(
+                selectinload(Reservation.room_lines).selectinload(ReservationRoomLine.assigned_room),
+                selectinload(Reservation.assigned_room),
+            )
+            .where(Reservation.checkin == sheet_date, Reservation.status != ReservationStatus.cancelled)
+            .order_by(Reservation.guest_name)
+        )
+    ).scalars().all()
+    rooms = (await db.execute(select(Room).where(Room.is_active.is_(True)).order_by(Room.room_number))).scalars().all()
+    stations = (
+        await db.execute(select(PrintStation).where(PrintStation.is_active.is_(True)).order_by(PrintStation.name))
+    ).scalars().all()
+    occupied = await rooms_occupied_on_date(db, sheet_date)
+
+    return {
+        "admin": admin,
+        "rows": _sheet_rows(reservations),
+        "rooms": rooms,
+        "stations": stations,
+        "occupied": occupied,
+        "sheet_date": sheet_date,
+        "prev_date": sheet_date - timedelta(days=1),
+        "next_date": sheet_date + timedelta(days=1),
+    }
+
+
+@router.get("/reservations/sheet")
+async def reservations_sheet_page(
+    request: Request,
+    sheet_date: date = Query(default_factory=date.today, alias="date"),
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_session_html),
+):
+    context = await _sheet_context(db, admin, sheet_date)
+    return templates.TemplateResponse(request, "reservations/sheet.html", context)
+
+
+@router.post("/reservations/{reservation_id}/assign-and-print")
+async def assign_and_print_action(
+    reservation_id: int,
+    request: Request,
+    sheet_date: date = Form(..., alias="sheet_date"),
+    room_id: str = Form(default=""),
+    room_line_id: str = Form(default=""),
+    station_id: int = Form(...),
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_session_html),
+):
+    reservation = (
+        await db.execute(
+            select(Reservation)
+            .options(
+                selectinload(Reservation.room_lines).selectinload(ReservationRoomLine.assigned_room),
+                selectinload(Reservation.assigned_room),
+            )
+            .where(Reservation.id == reservation_id)
+        )
+    ).scalar_one_or_none()
+    station = await db.get(PrintStation, station_id)
+
+    if reservation is not None and station is not None and station.is_active:
+        room_id_value = int(room_id) if room_id else None
+        if room_line_id:
+            line = next((line for line in reservation.room_lines if line.id == int(room_line_id)), None)
+            if line is not None:
+                line.assigned_room_id = room_id_value
+        else:
+            reservation.assigned_room_id = room_id_value
+        await audit.log(
+            db, actor=admin.label, action="reservation.room_assigned_manually", entity_type="reservation",
+            entity_id=reservation.id, detail={"room_id": room_id_value, "room_line_id": room_line_id or None},
+        )
+        await db.flush()
+
+        app_settings = await get_or_create_settings(db)
+        text_summary, escpos_bytes = printing.build_reservation_receipt(reservation, station, app_settings)
+        job = await printing.enqueue_print_job(
+            db, station=station, reservation=reservation, payload_text=text_summary, escpos_bytes=escpos_bytes,
+            requested_by=admin.label,
+        )
+        await audit.log(
+            db, actor=admin.label, action="print_job.created", entity_type="print_job", entity_id=job.id,
+            detail={"reservation_id": reservation.id, "station_id": station.id},
+        )
+        await db.commit()
+
+    context = await _sheet_context(db, admin, sheet_date)
+    return templates.TemplateResponse(request, "reservations/sheet.html", context)
 
 
 @router.get("/reservations/{reservation_id}")

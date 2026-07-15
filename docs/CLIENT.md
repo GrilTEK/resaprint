@@ -11,7 +11,12 @@ target machine):
   engine: it polls the backend for queued print jobs targeted at this
   station, renders them to ESC/POS bytes, and sends them to a
   USB-attached receipt printer via the Windows print spooler's RAW
-  datatype (bypassing GDI rendering entirely).
+  datatype (bypassing GDI rendering entirely). Because it runs as
+  `LocalSystem` with `start= delayed-auto` and an explicit `depend=
+  Spooler` dependency, it starts automatically on boot — before or
+  without anyone logging into Windows — and only after the Print
+  Spooler service itself is up, so a reboot never leaves it trying to
+  print before the spooler is ready.
 - **`ResaPrint.Tray.exe`** — a status-only tray icon, auto-started at
   logon via a Scheduled Task. It has no printing logic and no way to
   stop the Agent — closing or killing the tray icon has zero effect on

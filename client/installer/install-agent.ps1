@@ -63,8 +63,20 @@ if ($LASTEXITCODE -ne 0) {
 if (-not $existingService) {
     Write-Host "Creating $serviceName service..."
     $binPath = "`"$installedExe`""
-    sc.exe create $serviceName binPath= $binPath start= auto obj= LocalSystem | Out-Null
+    # start= delayed-auto (not plain auto) + depend= Spooler: the Print
+    # Spooler service isn't guaranteed to be up yet when a plain
+    # auto-start service launches at boot, which can make the Agent's
+    # first OpenPrinter call fail right after a reboot. Delayed-auto
+    # start plus an explicit dependency makes Windows wait for Spooler
+    # first, so printing works unattended after every reboot without
+    # anyone logging in. obj= LocalSystem is what makes the service run
+    # with no interactive session at all.
+    sc.exe create $serviceName binPath= $binPath start= delayed-auto obj= LocalSystem depend= Spooler | Out-Null
     sc.exe description $serviceName "ResaPrint receipt printing agent" | Out-Null
+} else {
+    # Re-running the installer (upgrade path) — make sure an
+    # already-existing service picks up the same startup hardening.
+    sc.exe config $serviceName start= delayed-auto depend= Spooler | Out-Null
 }
 
 # Recovery options: restart after 5s, 30s, then 60s on repeated

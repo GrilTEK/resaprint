@@ -103,3 +103,57 @@ async def test_print_reservation_with_unknown_station_404s(authed_client: AsyncC
         f"/api/v1/reservations/{reservation_id}/print", json={"station_id": 999999}
     )
     assert print_resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_search_reservations_by_guest_name(authed_client: AsyncClient):
+    await authed_client.post("/api/v1/reservations", json={**RESERVATION_PAYLOAD, "guest_name": "Alice Example"})
+    await authed_client.post("/api/v1/reservations", json={**RESERVATION_PAYLOAD, "guest_name": "Bob Builder"})
+
+    response = await authed_client.get("/api/v1/reservations", params={"q": "alice"})
+    assert response.status_code == 200
+    results = response.json()
+    assert len(results) == 1
+    assert results[0]["guest_name"] == "Alice Example"
+
+
+@pytest.mark.asyncio
+async def test_search_reservations_no_match_returns_empty(authed_client: AsyncClient):
+    await authed_client.post("/api/v1/reservations", json=RESERVATION_PAYLOAD)
+
+    response = await authed_client.get("/api/v1/reservations", params={"q": "nonexistent-guest-xyz"})
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_manually_assign_and_clear_room(authed_client: AsyncClient):
+    room_resp = await authed_client.post("/api/v1/rooms", json={"room_number": "201", "category": "Suite"})
+    room_id = room_resp.json()["id"]
+
+    create_resp = await authed_client.post("/api/v1/reservations", json=RESERVATION_PAYLOAD)
+    reservation_id = create_resp.json()["id"]
+    assert create_resp.json()["assigned_room_id"] is None
+
+    assign_resp = await authed_client.post(
+        f"/api/v1/reservations/{reservation_id}/assign-room", json={"room_id": room_id}
+    )
+    assert assign_resp.status_code == 200
+    assert assign_resp.json()["assigned_room_id"] == room_id
+
+    clear_resp = await authed_client.post(
+        f"/api/v1/reservations/{reservation_id}/assign-room", json={"room_id": None}
+    )
+    assert clear_resp.status_code == 200
+    assert clear_resp.json()["assigned_room_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_assign_room_unknown_room_404s(authed_client: AsyncClient):
+    create_resp = await authed_client.post("/api/v1/reservations", json=RESERVATION_PAYLOAD)
+    reservation_id = create_resp.json()["id"]
+
+    response = await authed_client.post(
+        f"/api/v1/reservations/{reservation_id}/assign-room", json={"room_id": 999999}
+    )
+    assert response.status_code == 404

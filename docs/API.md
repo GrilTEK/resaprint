@@ -46,13 +46,14 @@ reception can call it.
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| GET | `/api/v1/reservations` | admin | Filters: `status_filter`, `source_channel`, `checkin_from`, `checkin_to` |
+| GET | `/api/v1/reservations` | admin | Filters: `status_filter`, `source_channel`, `checkin_from`, `checkin_to`, `q` (free-text search across guest name/email/phone/external ref/room type, case-insensitive substring) |
 | GET | `/api/v1/reservations/{id}` | admin | |
 | POST | `/api/v1/reservations` | admin | Manual creation, `status` forced to `manual`. A room is auto-assigned on creation (see Rooms below) |
 | PATCH | `/api/v1/reservations/{id}` | admin | Partial update; logged to audit log as `reservation.manual_override` |
 | DELETE | `/api/v1/reservations/{id}` | admin | Soft-cancel (`status = cancelled`), does not delete the row |
 | POST | `/api/v1/reservations/{id}/print` | admin | Body: `{"station_id": <int>}`. Renders a receipt and enqueues (and, for LAN stations, immediately sends) a print job |
 | POST | `/api/v1/reservations/{id}/reassign-room` | admin | Clears any current room assignment and re-runs auto-assignment — use after adding new rooms or freeing up a conflicting stay |
+| POST | `/api/v1/reservations/{id}/assign-room` | admin | Body: `{"room_id": <int\|null>, "room_line_id": <int\|null>}`. Manual override — sets (or clears with `room_id: null`) the assigned room directly, bypassing the availability check. Targets a specific room line for multi-room bookings, otherwise the reservation itself |
 
 ## Rooms
 
@@ -130,10 +131,16 @@ fixed later (add a room, cancel the conflicting stay, then call
 
 ## Admin UI pages (server-rendered, not JSON)
 
-`/login`, `/` (dashboard), `/reservations`, `/reservations/{id}`,
-`/print-jobs` (+ `/print-jobs/table` HTMX partial), `/stations`,
-`/parsers` (+ `/parsers/{id}`), `/audit-log`, `/settings`. These use the same
-underlying data as the JSON API but return HTML, and some accept
-form-encoded POSTs directly (e.g. `/reservations/{id}/print`,
+`/login`, `/` (dashboard), `/reservations` (accepts `?q=` for the same
+free-text search as the JSON API), `/reservations/{id}`,
+`/reservations/sheet` (accepts `?date=YYYY-MM-DD`, default today — the
+"arrivals sheet": one row per booked room for that check-in date, with
+inline room-assignment + station dropdowns and a single "Assign &
+print" button per row that does both in one action, backed by `POST
+/reservations/{id}/assign-and-print`), `/print-jobs` (+
+`/print-jobs/table` HTMX partial), `/stations`, `/parsers` (+
+`/parsers/{id}`), `/rooms`, `/audit-log`, `/settings`, `/users`. These
+use the same underlying data as the JSON API but return HTML, and some
+accept form-encoded POSTs directly (e.g. `/reservations/{id}/print`,
 `/stations`, `/parsers/{id}/test`) for HTMX interactions rather than
 JSON bodies.
