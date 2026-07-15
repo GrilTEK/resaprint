@@ -12,6 +12,13 @@ RESERVATION_PAYLOAD = {
 }
 
 
+@pytest.fixture(autouse=True)
+async def _enable_auto_assign(authed_client: AsyncClient):
+    """room_auto_assign_enabled defaults to off — these tests exercise
+    the automatic-on-creation path specifically, so turn it on."""
+    await authed_client.patch("/api/v1/config", json={"room_auto_assign_enabled": True})
+
+
 @pytest.mark.asyncio
 async def test_reservation_auto_assigned_to_matching_free_room(authed_client: AsyncClient):
     await authed_client.post("/api/v1/rooms", json={"room_number": "101", "category": "Double Room"})
@@ -65,6 +72,32 @@ async def test_inactive_room_is_not_assigned(authed_client: AsyncClient):
 
     create_resp = await authed_client.post("/api/v1/reservations", json=RESERVATION_PAYLOAD)
     assert create_resp.json()["assigned_room_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_auto_assign_disabled_leaves_new_reservations_unassigned(authed_client: AsyncClient):
+    await authed_client.post("/api/v1/rooms", json={"room_number": "101", "category": "Double Room"})
+    await authed_client.patch("/api/v1/config", json={"room_auto_assign_enabled": False})
+
+    create_resp = await authed_client.post("/api/v1/reservations", json=RESERVATION_PAYLOAD)
+    assert create_resp.status_code == 201
+    assert create_resp.json()["assigned_room_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_manual_assignment_still_works_when_auto_assign_disabled(authed_client: AsyncClient):
+    room_resp = await authed_client.post("/api/v1/rooms", json={"room_number": "101", "category": "Double Room"})
+    room_id = room_resp.json()["id"]
+    await authed_client.patch("/api/v1/config", json={"room_auto_assign_enabled": False})
+
+    create_resp = await authed_client.post("/api/v1/reservations", json=RESERVATION_PAYLOAD)
+    reservation_id = create_resp.json()["id"]
+    assert create_resp.json()["assigned_room_id"] is None
+
+    assign_resp = await authed_client.post(
+        f"/api/v1/reservations/{reservation_id}/assign-room", json={"room_id": room_id}
+    )
+    assert assign_resp.json()["assigned_room_id"] == room_id
 
 
 @pytest.mark.asyncio

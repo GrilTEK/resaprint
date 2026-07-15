@@ -233,7 +233,9 @@ async def _process_email(
         )
     db.add(reservation)
     await db.flush()
-    await assign_rooms_for_reservation(db, reservation)
+    app_settings = await get_or_create_settings(db)
+    if app_settings.room_auto_assign_enabled:
+        await assign_rooms_for_reservation(db, reservation)
     await audit.log(
         db,
         actor="system",

@@ -81,7 +81,9 @@ async def create_reservation(
     reservation = Reservation(**payload.model_dump(), status=ReservationStatus.manual)
     db.add(reservation)
     await db.flush()
-    await assign_rooms_for_reservation(db, reservation)
+    app_settings = await get_or_create_settings(db)
+    if app_settings.room_auto_assign_enabled:
+        await assign_rooms_for_reservation(db, reservation)
     await audit.log(
         db, actor=admin.label, action="reservation.created_manual", entity_type="reservation", entity_id=reservation.id
     )

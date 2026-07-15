@@ -11,6 +11,7 @@ class ConfigOut(BaseModel):
     imap_poll_seconds: int
     auto_print_enabled: bool
     auto_print_station_id: int | None
+    room_auto_assign_enabled: bool
     receipt_font: str
     receipt_font_size: str
     receipt_bold_labels: bool
@@ -33,6 +34,7 @@ def config_out_from_row(row) -> "ConfigOut":
         imap_poll_seconds=row.imap_poll_seconds,
         auto_print_enabled=row.auto_print_enabled,
         auto_print_station_id=row.auto_print_station_id,
+        room_auto_assign_enabled=row.room_auto_assign_enabled,
         receipt_font=row.receipt_font,
         receipt_font_size=row.receipt_font_size,
         receipt_bold_labels=row.receipt_bold_labels,
@@ -52,6 +54,7 @@ class ConfigUpdate(BaseModel):
     imap_poll_seconds: int | None = None
     auto_print_enabled: bool | None = None
     auto_print_station_id: int | None = None
+    room_auto_assign_enabled: bool | None = None
     receipt_font: str | None = None
     receipt_font_size: str | None = None
     receipt_bold_labels: bool | None = None

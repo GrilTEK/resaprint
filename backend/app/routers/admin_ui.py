@@ -548,6 +548,7 @@ async def settings_update_action(
     imap_poll_seconds: int = Form(default=60),
     auto_print_enabled: bool = Form(default=False),
     auto_print_station_id: str = Form(default=""),
+    room_auto_assign_enabled: bool = Form(default=False),
     receipt_font: str = Form(default="font_a"),
     receipt_font_size: str = Form(default="normal"),
     receipt_bold_labels: bool = Form(default=False),
@@ -569,6 +570,7 @@ async def settings_update_action(
 
     row.auto_print_enabled = auto_print_enabled
     row.auto_print_station_id = int(auto_print_station_id) if auto_print_station_id else None
+    row.room_auto_assign_enabled = room_auto_assign_enabled
 
     row.receipt_font = receipt_font
     row.receipt_font_size = receipt_font_size

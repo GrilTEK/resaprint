@@ -69,6 +69,23 @@
   </div>
 
   <div class="card">
+    <h2>Room assignment</h2>
+    <p style="color: #666; font-size: 0.85rem;">
+      If enabled, every new reservation (manual or from email) is
+      automatically assigned a free room matching its room type/category.
+      Turn this off to only assign rooms manually, e.g. from the
+      Reservations &raquo; Sheet page — manual assignment always works
+      regardless of this setting.
+    </p>
+    <div class="form-row">
+      <label>
+        <input type="checkbox" name="room_auto_assign_enabled" {% if config.room_auto_assign_enabled %}checked{% endif %} style="width: auto;">
+        Auto-assign rooms on reservation creation
+      </label>
+    </div>
+  </div>
+
+  <div class="card">
     <h2>Receipt layout</h2>
     <p style="color: #666; font-size: 0.85rem;">
       Applies to every printed receipt (LAN and USB agent stations alike).

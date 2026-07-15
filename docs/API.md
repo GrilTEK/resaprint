@@ -48,7 +48,7 @@ reception can call it.
 |---|---|---|---|
 | GET | `/api/v1/reservations` | admin | Filters: `status_filter`, `source_channel`, `checkin_from`, `checkin_to`, `q` (free-text search across guest name/email/phone/external ref/room type, case-insensitive substring) |
 | GET | `/api/v1/reservations/{id}` | admin | |
-| POST | `/api/v1/reservations` | admin | Manual creation, `status` forced to `manual`. A room is auto-assigned on creation (see Rooms below) |
+| POST | `/api/v1/reservations` | admin | Manual creation, `status` forced to `manual`. If `room_auto_assign_enabled` is on (see Config below, default off), a room is auto-assigned on creation (see Rooms below) |
 | PATCH | `/api/v1/reservations/{id}` | admin | Partial update; logged to audit log as `reservation.manual_override` |
 | DELETE | `/api/v1/reservations/{id}` | admin | Soft-cancel (`status = cancelled`), does not delete the row |
 | POST | `/api/v1/reservations/{id}/print` | admin | Body: `{"station_id": <int>}`. Renders a receipt and enqueues (and, for LAN stations, immediately sends) a print job |
@@ -109,12 +109,12 @@ fixed later (add a room, cancel the conflicting stay, then call
 | PATCH / DELETE | `/api/v1/parsers/{id}/fields/{field_id}` | admin | |
 | POST | `/api/v1/parsers/{id}/test` | admin | Dry-run parse of pasted sample text — does not persist anything |
 
-## Config (IMAP settings)
+## Config (IMAP + auto-print + room assignment + receipt settings)
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| GET | `/api/v1/config` | admin | Returns IMAP host/port/user/folders/poll interval and `imap_has_password` (bool) — the password itself is never returned |
-| PATCH | `/api/v1/config` | admin | Partial update; `imap_password` is write-only — omit or send blank to leave the existing password unchanged. Encrypted at rest (Fernet, keyed from `SECRET_KEY`). Row is seeded from `backend/.env`'s `IMAP_*` on first access, then the DB is authoritative |
+| GET | `/api/v1/config` | admin | Returns IMAP host/port/user/folders/poll interval and `imap_has_password` (bool) — the password itself is never returned. Also returns `auto_print_enabled`/`auto_print_station_id`, `room_auto_assign_enabled`, and the `receipt_*` layout fields |
+| PATCH | `/api/v1/config` | admin | Partial update; `imap_password` is write-only — omit or send blank to leave the existing password unchanged. Encrypted at rest (Fernet, keyed from `SECRET_KEY`). Row is seeded from `backend/.env`'s `IMAP_*` on first access, then the DB is authoritative. `room_auto_assign_enabled` (default `false`) gates only the automatic-on-creation assignment path (manual creation and email ingestion) — the arrivals sheet and `assign-room`/`reassign-room` always work regardless of this setting |
 
 ## Audit log
 

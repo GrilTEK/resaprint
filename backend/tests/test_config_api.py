@@ -17,6 +17,7 @@ async def test_get_config_seeds_defaults_on_first_access(authed_client: AsyncCli
     assert body["imap_has_password"] is False
     assert body["auto_print_enabled"] is False
     assert body["auto_print_station_id"] is None
+    assert body["room_auto_assign_enabled"] is False
     assert body["receipt_font"] == "font_a"
     assert body["receipt_font_size"] == "normal"
     assert body["receipt_show_nights"] is True

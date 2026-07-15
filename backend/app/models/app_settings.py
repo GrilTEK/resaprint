@@ -38,6 +38,12 @@ class AppSettings(Base):
         ForeignKey("print_stations.id", ondelete="SET NULL"), nullable=True
     )
 
+    # If enabled, every new reservation (manual or ingested) has a
+    # free room auto-assigned by category on creation. Manual
+    # assignment (the arrivals sheet, assign-room, reassign-room) is
+    # unaffected by this — it's only the automatic-on-creation path.
+    room_auto_assign_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+
     # Receipt layout — applied to every printed receipt (LAN + USB
     # agent alike), global rather than per-station for simplicity.
     receipt_font: Mapped[str] = mapped_column(String(10), default="font_a")  # "font_a" | "font_b"
