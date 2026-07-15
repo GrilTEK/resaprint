@@ -4,12 +4,12 @@ from datetime import date, datetime, timezone
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.templating import Jinja2Templates
 from passlib.context import CryptContext
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.deps import get_db, require_admin_session_html
-from app.models.admin_pin import AdminPin
+from app.deps import get_db, require_admin_role_html, require_admin_session_html
+from app.models.admin_pin import AdminPin, AdminRole
 from app.models.audit_log import AuditLog
 from app.models.parser_mapping import (
     ExtractionType,
@@ -24,6 +24,7 @@ from app.schemas.config import config_out_from_row
 from app.schemas.parser import PARSED_RESERVATION_FIELDS
 from app.services import audit, printing
 from app.services.app_settings import get_or_create_settings
+from app.services.auth_service import hash_pin
 from app.services.crypto import encrypt
 from app.services.parser_registry import GenericFieldMappingParser
 
@@ -157,7 +158,7 @@ async def print_jobs_table(
 async def stations_page(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    admin: AdminPin = Depends(require_admin_session_html),
+    admin: AdminPin = Depends(require_admin_role_html),
 ):
     stations = (await db.execute(select(PrintStation).order_by(PrintStation.name))).scalars().all()
     return templates.TemplateResponse(request, "stations/list.html", {"admin": admin, "stations": stations})
@@ -171,7 +172,7 @@ async def create_station_action(
     lan_host: str = Form(default=""),
     lan_port: int = Form(default=9100),
     db: AsyncSession = Depends(get_db),
-    admin: AdminPin = Depends(require_admin_session_html),
+    admin: AdminPin = Depends(require_admin_role_html),
 ):
     station = PrintStation(
         name=name,
@@ -193,7 +194,7 @@ async def pair_station_action(
     station_id: int,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    admin: AdminPin = Depends(require_admin_session_html),
+    admin: AdminPin = Depends(require_admin_role_html),
 ):
     station = await db.get(PrintStation, station_id)
     api_key = secrets.token_urlsafe(32)
@@ -210,7 +211,7 @@ async def delete_station_action(
     station_id: int,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    admin: AdminPin = Depends(require_admin_session_html),
+    admin: AdminPin = Depends(require_admin_role_html),
 ):
     station = await db.get(PrintStation, station_id)
     if station is not None:
@@ -229,7 +230,7 @@ async def delete_station_action(
 async def parsers_page(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    admin: AdminPin = Depends(require_admin_session_html),
+    admin: AdminPin = Depends(require_admin_role_html),
 ):
     mappings = (
         await db.execute(select(ParserFieldMapping).options(selectinload(ParserFieldMapping.fields)))
@@ -243,7 +244,7 @@ async def create_parser_action(
     profile_slug: str = Form(...),
     match_subject_regex: str = Form(default=""),
     db: AsyncSession = Depends(get_db),
-    admin: AdminPin = Depends(require_admin_session_html),
+    admin: AdminPin = Depends(require_admin_role_html),
 ):
     mapping = ParserFieldMapping(profile_slug=profile_slug, match_subject_regex=match_subject_regex or None)
     db.add(mapping)
@@ -271,7 +272,7 @@ async def parser_detail_page(
     mapping_id: int,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    admin: AdminPin = Depends(require_admin_session_html),
+    admin: AdminPin = Depends(require_admin_role_html),
 ):
     mapping = await _mapping_or_404(db, mapping_id)
     return templates.TemplateResponse(
@@ -287,7 +288,7 @@ async def update_room_line_pattern_action(
     request: Request,
     room_line_pattern: str = Form(default=""),
     db: AsyncSession = Depends(get_db),
-    admin: AdminPin = Depends(require_admin_session_html),
+    admin: AdminPin = Depends(require_admin_role_html),
 ):
     mapping = await _mapping_or_404(db, mapping_id)
     mapping.room_line_pattern = room_line_pattern or None
@@ -315,7 +316,7 @@ async def add_parser_field_action(
     pattern: str = Form(...),
     transform: FieldTransform = Form(default=FieldTransform.none),
     db: AsyncSession = Depends(get_db),
-    admin: AdminPin = Depends(require_admin_session_html),
+    admin: AdminPin = Depends(require_admin_role_html),
 ):
     field = ParserFieldMappingField(
         mapping_id=mapping_id,
@@ -347,7 +348,7 @@ async def test_parser_action(
     subject: str = Form(default=""),
     body: str = Form(...),
     db: AsyncSession = Depends(get_db),
-    _admin: AdminPin = Depends(require_admin_session_html),
+    _admin: AdminPin = Depends(require_admin_role_html),
 ):
     mapping = await _mapping_or_404(db, mapping_id)
     parser = GenericFieldMappingParser(mapping)
@@ -368,7 +369,7 @@ async def test_parser_action(
 async def audit_log_page(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    admin: AdminPin = Depends(require_admin_session_html),
+    admin: AdminPin = Depends(require_admin_role_html),
 ):
     entries = (await db.execute(select(AuditLog).order_by(AuditLog.created_at.desc()).limit(500))).scalars().all()
     return templates.TemplateResponse(request, "audit_log/list.html", {"admin": admin, "entries": entries})
@@ -378,7 +379,7 @@ async def audit_log_page(
 async def settings_page(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    admin: AdminPin = Depends(require_admin_session_html),
+    admin: AdminPin = Depends(require_admin_role_html),
 ):
     row = await get_or_create_settings(db)
     stations = (
@@ -408,7 +409,7 @@ async def settings_update_action(
     receipt_show_guests: bool = Form(default=False),
     receipt_show_channel: bool = Form(default=False),
     db: AsyncSession = Depends(get_db),
-    admin: AdminPin = Depends(require_admin_session_html),
+    admin: AdminPin = Depends(require_admin_role_html),
 ):
     row = await get_or_create_settings(db)
     row.imap_host = imap_host or None
@@ -439,4 +440,104 @@ async def settings_update_action(
     ).scalars().all()
     return templates.TemplateResponse(
         request, "settings.html", {"admin": admin, "config": _config_out(row), "stations": stations, "saved": True}
+    )
+
+
+@router.get("/users")
+async def users_page(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_role_html),
+):
+    users = (await db.execute(select(AdminPin).order_by(AdminPin.label))).scalars().all()
+    return templates.TemplateResponse(request, "users/list.html", {"admin": admin, "users": users, "roles": list(AdminRole)})
+
+
+@router.post("/users")
+async def create_user_action(
+    request: Request,
+    label: str = Form(...),
+    role: AdminRole = Form(...),
+    pin: str = Form(...),
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_role_html),
+):
+
+    user = AdminPin(label=label, role=role, pin_hash=hash_pin(pin))
+    db.add(user)
+    await db.flush()
+    await audit.log(db, actor=admin.label, action="user.created", entity_type="admin_pin", entity_id=user.id)
+    await db.commit()
+
+    users = (await db.execute(select(AdminPin).order_by(AdminPin.label))).scalars().all()
+    return templates.TemplateResponse(request, "users/list.html", {"admin": admin, "users": users, "roles": list(AdminRole)})
+
+
+@router.post("/users/{user_id}/delete")
+async def delete_user_action(
+    user_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_role_html),
+):
+
+    user = await db.get(AdminPin, user_id)
+    error = None
+    if user is not None:
+        if user.role == AdminRole.admin:
+            other_admins = (
+                await db.execute(
+                    select(func.count()).select_from(AdminPin).where(
+                        AdminPin.role == AdminRole.admin, AdminPin.is_active.is_(True), AdminPin.id != user.id
+                    )
+                )
+            ).scalar_one()
+            if other_admins == 0:
+                error = "Cannot delete the last active admin user."
+        if error is None:
+            await audit.log(
+                db, actor=admin.label, action="user.deleted", entity_type="admin_pin", entity_id=user.id,
+                detail={"label": user.label},
+            )
+            await db.delete(user)
+            await db.commit()
+
+    users = (await db.execute(select(AdminPin).order_by(AdminPin.label))).scalars().all()
+    return templates.TemplateResponse(
+        request, "users/list.html", {"admin": admin, "users": users, "roles": list(AdminRole), "error": error}
+    )
+
+
+@router.post("/users/{user_id}/toggle-active")
+async def toggle_user_active_action(
+    user_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_role_html),
+):
+
+    user = await db.get(AdminPin, user_id)
+    error = None
+    if user is not None:
+        if user.role == AdminRole.admin and user.is_active:
+            other_admins = (
+                await db.execute(
+                    select(func.count()).select_from(AdminPin).where(
+                        AdminPin.role == AdminRole.admin, AdminPin.is_active.is_(True), AdminPin.id != user.id
+                    )
+                )
+            ).scalar_one()
+            if other_admins == 0:
+                error = "Cannot deactivate the last active admin user."
+        if error is None:
+            user.is_active = not user.is_active
+            await audit.log(
+                db, actor=admin.label, action="user.updated", entity_type="admin_pin", entity_id=user.id,
+                detail={"is_active": user.is_active},
+            )
+            await db.commit()
+
+    users = (await db.execute(select(AdminPin).order_by(AdminPin.label))).scalars().all()
+    return templates.TemplateResponse(
+        request, "users/list.html", {"admin": admin, "users": users, "roles": list(AdminRole), "error": error}
     )

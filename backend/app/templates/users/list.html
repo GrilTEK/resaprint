@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Users — ResaPrint{% endblock %}
+{% block content %}
+<h1>Users</h1>
+
+{% if error %}<p class="error-text">{{ error }}</p>{% endif %}
+
+<div class="card">
+  <table>
+    <thead><tr><th>Label</th><th>Role</th><th>Active</th><th>Last login</th><th></th></tr></thead>
+    <tbody>
+      {% for u in users %}
+      <tr>
+        <td>{{ u.label }}</td>
+        <td>{{ u.role.value }}</td>
+        <td>{{ "yes" if u.is_active else "no" }}</td>
+        <td>{{ u.last_login_at or "never" }}</td>
+        <td>
+          <button hx-post="/users/{{ u.id }}/toggle-active" hx-target="body" class="secondary">
+            {{ "Deactivate" if u.is_active else "Activate" }}
+          </button>
+          <button
+            hx-post="/users/{{ u.id }}/delete"
+            hx-target="body"
+            hx-confirm="Delete user &quot;{{ u.label }}&quot;? This cannot be undone."
+            class="secondary"
+            style="background: var(--danger); color: #fff;"
+          >Delete</button>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5">No users yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Add user</h2>
+  <form hx-post="/users" hx-target="body">
+    <div class="form-row"><label>Label</label><input type="text" name="label" required placeholder="e.g. Front desk"></div>
+    <div class="form-row">
+      <label>Role</label>
+      <select name="role">
+        {% for r in roles %}
+        <option value="{{ r.value }}">{{ r.value }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-row"><label>PIN</label><input type="password" name="pin" required></div>
+    <button type="submit">Create</button>
+  </form>
+  <p style="color: #666; font-size: 0.85rem;">
+    <strong>admin</strong>: full access (settings, parsers, stations, users, rooms).
+    <strong>reception</strong>: reservations and print jobs only.
+  </p>
+</div>
+{% endblock %}

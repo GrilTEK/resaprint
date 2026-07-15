@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.deps import get_db, require_admin_session
+from app.deps import get_db, require_admin_role
 from app.models.admin_pin import AdminPin
 from app.schemas.config import ConfigOut, ConfigUpdate, config_out_from_row
 from app.services import audit
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/v1/config", tags=["config"])
 @router.get("", response_model=ConfigOut)
 async def get_config(
     db: AsyncSession = Depends(get_db),
-    _admin: AdminPin = Depends(require_admin_session),
+    _admin: AdminPin = Depends(require_admin_role),
 ) -> ConfigOut:
     row = await get_or_create_settings(db)
     return config_out_from_row(row)
@@ -24,7 +24,7 @@ async def get_config(
 async def update_config(
     payload: ConfigUpdate,
     db: AsyncSession = Depends(get_db),
-    admin: AdminPin = Depends(require_admin_session),
+    admin: AdminPin = Depends(require_admin_role),
 ) -> ConfigOut:
     row = await get_or_create_settings(db)
 

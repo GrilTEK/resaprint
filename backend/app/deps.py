@@ -6,14 +6,21 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
-from app.exceptions import NotAuthenticatedHtml
-from app.models.admin_pin import AdminPin
+from app.exceptions import ForbiddenHtml, NotAuthenticatedHtml
+from app.models.admin_pin import AdminPin, AdminRole
 from app.models.print_station import PrintStation, StationConnectionType
 from app.services.auth_service import SESSION_COOKIE_NAME, read_session_token
 
 _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-__all__ = ["get_db", "require_admin_session", "require_admin_session_html", "require_station_key"]
+__all__ = [
+    "get_db",
+    "require_admin_session",
+    "require_admin_session_html",
+    "require_admin_role",
+    "require_admin_role_html",
+    "require_station_key",
+]
 
 
 async def require_admin_session(
@@ -57,6 +64,21 @@ async def require_admin_session_html(
     if admin_pin is None:
         raise NotAuthenticatedHtml()
     return admin_pin
+
+
+async def require_admin_role(admin: AdminPin = Depends(require_admin_session)) -> AdminPin:
+    """Admin-only JSON routes (settings, parsers, stations, users, rooms)."""
+    if admin.role != AdminRole.admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin role required")
+    return admin
+
+
+async def require_admin_role_html(admin: AdminPin = Depends(require_admin_session_html)) -> AdminPin:
+    """Same as require_admin_role but for HTML pages — redirects a
+    reception-role user back to the dashboard instead of a raw 403."""
+    if admin.role != AdminRole.admin:
+        raise ForbiddenHtml()
+    return admin
 
 
 async def require_station_key(

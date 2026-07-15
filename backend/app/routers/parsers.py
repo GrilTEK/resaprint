@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.deps import get_db, require_admin_session
+from app.deps import get_db, require_admin_role
 from app.models.admin_pin import AdminPin
 from app.models.parser_mapping import ParserFieldMapping, ParserFieldMappingField
 from app.schemas.parser_admin import (
@@ -34,7 +34,7 @@ async def _get_mapping_or_404(db: AsyncSession, mapping_id: int) -> ParserFieldM
 @router.get("", response_model=list[ParserFieldMappingOut])
 async def list_parsers(
     db: AsyncSession = Depends(get_db),
-    _admin: AdminPin = Depends(require_admin_session),
+    _admin: AdminPin = Depends(require_admin_role),
 ) -> list[ParserFieldMapping]:
     result = await db.execute(
         select(ParserFieldMapping).options(selectinload(ParserFieldMapping.fields))
@@ -46,7 +46,7 @@ async def list_parsers(
 async def create_parser(
     payload: ParserFieldMappingCreate,
     db: AsyncSession = Depends(get_db),
-    admin: AdminPin = Depends(require_admin_session),
+    admin: AdminPin = Depends(require_admin_role),
 ) -> ParserFieldMapping:
     mapping = ParserFieldMapping(**payload.model_dump())
     db.add(mapping)
@@ -61,7 +61,7 @@ async def update_parser(
     mapping_id: int,
     payload: ParserFieldMappingCreate,
     db: AsyncSession = Depends(get_db),
-    admin: AdminPin = Depends(require_admin_session),
+    admin: AdminPin = Depends(require_admin_role),
 ) -> ParserFieldMapping:
     mapping = await _get_mapping_or_404(db, mapping_id)
     for field, value in payload.model_dump(exclude_unset=True).items():
@@ -75,7 +75,7 @@ async def update_parser(
 async def delete_parser(
     mapping_id: int,
     db: AsyncSession = Depends(get_db),
-    admin: AdminPin = Depends(require_admin_session),
+    admin: AdminPin = Depends(require_admin_role),
 ) -> None:
     mapping = await _get_mapping_or_404(db, mapping_id)
     await db.delete(mapping)
@@ -88,7 +88,7 @@ async def add_parser_field(
     mapping_id: int,
     payload: ParserFieldCreate,
     db: AsyncSession = Depends(get_db),
-    admin: AdminPin = Depends(require_admin_session),
+    admin: AdminPin = Depends(require_admin_role),
 ) -> ParserFieldMapping:
     mapping = await _get_mapping_or_404(db, mapping_id)
     field = ParserFieldMappingField(mapping_id=mapping.id, **payload.model_dump())
@@ -107,7 +107,7 @@ async def update_parser_field(
     field_id: int,
     payload: ParserFieldCreate,
     db: AsyncSession = Depends(get_db),
-    admin: AdminPin = Depends(require_admin_session),
+    admin: AdminPin = Depends(require_admin_role),
 ) -> ParserFieldMapping:
     field = await db.get(ParserFieldMappingField, field_id)
     if field is None or field.mapping_id != mapping_id:
@@ -127,7 +127,7 @@ async def delete_parser_field(
     mapping_id: int,
     field_id: int,
     db: AsyncSession = Depends(get_db),
-    admin: AdminPin = Depends(require_admin_session),
+    admin: AdminPin = Depends(require_admin_role),
 ) -> ParserFieldMapping:
     field = await db.get(ParserFieldMappingField, field_id)
     if field is None or field.mapping_id != mapping_id:
@@ -146,7 +146,7 @@ async def test_parser(
     mapping_id: int,
     payload: ParserTestRequest,
     db: AsyncSession = Depends(get_db),
-    _admin: AdminPin = Depends(require_admin_session),
+    _admin: AdminPin = Depends(require_admin_role),
 ) -> ParserTestResult:
     mapping = await _get_mapping_or_404(db, mapping_id)
     parser = GenericFieldMappingParser(mapping)

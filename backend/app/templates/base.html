@@ -13,10 +13,13 @@
     <a href="/" class="brand">ResaPrint</a>
     <a href="/reservations">Reservations</a>
     <a href="/print-jobs">Print jobs</a>
+    {% if admin.role.value == "admin" %}
     <a href="/stations">Stations</a>
     <a href="/parsers">Parsers</a>
     <a href="/audit-log">Audit log</a>
     <a href="/settings">Settings</a>
+    <a href="/users">Users</a>
+    {% endif %}
     <span class="spacer"></span>
     <span class="admin-label">{{ admin.label }}</span>
     <button hx-post="/logout" hx-target="body" hx-push-url="/login">Log out</button>

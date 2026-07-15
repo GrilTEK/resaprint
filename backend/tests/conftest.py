@@ -55,3 +55,22 @@ async def authed_client(client: AsyncClient, db_session: AsyncSession) -> AsyncG
     response = await client.post("/login", data={"pin": "1234"})
     assert response.status_code == 200
     yield client
+
+
+@pytest_asyncio.fixture
+async def reception_client(client: AsyncClient, db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
+    """A second, independently-cookied client authenticated as a
+    reception-role PIN — for asserting admin-only routes reject it.
+    Depends on `client` only to guarantee the get_db override is
+    already installed; it does not reuse `client`'s cookie jar."""
+    from app.models.admin_pin import AdminPin, AdminRole
+    from app.services.auth_service import hash_pin
+
+    db_session.add(AdminPin(label="Test reception", pin_hash=hash_pin("5678"), role=AdminRole.reception))
+    await db_session.commit()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="https://test") as ac:
+        response = await ac.post("/login", data={"pin": "5678"})
+        assert response.status_code == 200
+        yield ac

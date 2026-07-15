@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.exceptions import NotAuthenticatedHtml
+from app.exceptions import ForbiddenHtml, NotAuthenticatedHtml
 from app.routers import (
     admin_ui,
     audit_log,
@@ -13,6 +13,7 @@ from app.routers import (
     print_jobs,
     reservations,
     stations,
+    users,
 )
 
 app = FastAPI(title="ResaPrint", version="0.1.0")
@@ -25,6 +26,11 @@ async def not_authenticated_handler(request: Request, exc: NotAuthenticatedHtml)
     return RedirectResponse(url="/login", status_code=303)
 
 
+@app.exception_handler(ForbiddenHtml)
+async def forbidden_handler(request: Request, exc: ForbiddenHtml) -> RedirectResponse:
+    return RedirectResponse(url="/", status_code=303)
+
+
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(reservations.router)
@@ -33,4 +39,5 @@ app.include_router(stations.router)
 app.include_router(parsers.router)
 app.include_router(audit_log.router)
 app.include_router(config.router)
+app.include_router(users.router)
 app.include_router(admin_ui.router)

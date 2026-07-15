@@ -6,7 +6,7 @@ from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.deps import get_db, require_admin_session
+from app.deps import get_db, require_admin_role
 from app.models.admin_pin import AdminPin
 from app.models.print_station import PrintStation
 from app.schemas.print_station import PairResponse, PrintStationCreate, PrintStationOut
@@ -19,7 +19,7 @@ _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 @router.get("", response_model=list[PrintStationOut])
 async def list_stations(
     db: AsyncSession = Depends(get_db),
-    _admin: AdminPin = Depends(require_admin_session),
+    _admin: AdminPin = Depends(require_admin_role),
 ) -> list[PrintStation]:
     result = await db.execute(select(PrintStation).order_by(PrintStation.name))
     return list(result.scalars().all())
@@ -29,7 +29,7 @@ async def list_stations(
 async def create_station(
     payload: PrintStationCreate,
     db: AsyncSession = Depends(get_db),
-    admin: AdminPin = Depends(require_admin_session),
+    admin: AdminPin = Depends(require_admin_role),
 ) -> PrintStation:
     station = PrintStation(**payload.model_dump())
     db.add(station)
@@ -44,7 +44,7 @@ async def create_station(
 async def pair_station(
     station_id: int,
     db: AsyncSession = Depends(get_db),
-    admin: AdminPin = Depends(require_admin_session),
+    admin: AdminPin = Depends(require_admin_role),
 ) -> PairResponse:
     station = await db.get(PrintStation, station_id)
     if station is None:
@@ -64,7 +64,7 @@ async def pair_station(
 async def delete_station(
     station_id: int,
     db: AsyncSession = Depends(get_db),
-    admin: AdminPin = Depends(require_admin_session),
+    admin: AdminPin = Depends(require_admin_role),
 ) -> None:
     """Hard delete — the row is actually removed (and its print job
     history cascade-deleted via the FK), freeing up the station's
@@ -87,7 +87,7 @@ async def delete_station(
 async def station_status(
     station_id: int,
     db: AsyncSession = Depends(get_db),
-    _admin: AdminPin = Depends(require_admin_session),
+    _admin: AdminPin = Depends(require_admin_role),
 ) -> PrintStation:
     station = await db.get(PrintStation, station_id)
     if station is None:

@@ -22,6 +22,26 @@ Failed admin logins count toward a per-PIN lockout
 `PIN_LOCKOUT_MINUTES`); the API returns a generic "invalid PIN" for
 both wrong-PIN and locked-PIN cases to avoid leaking lockout state.
 
+### Roles
+
+Every PIN has a `role`: `admin` (full access) or `reception`
+(reservations + print jobs only). Reception-role requests to
+admin-only endpoints (stations, parsers, config, users, audit-log)
+return `403 Forbidden`; the equivalent HTML pages redirect to `/`
+instead. In `docs/API.md`'s tables below, "admin" in the Auth column
+means admin-role specifically (via `require_admin_role`/
+`require_admin_role_html`); plain "any role" means both admin and
+reception can call it.
+
+## Users
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/api/v1/users` | admin | Never returns `pin_hash` |
+| POST | `/api/v1/users` | admin | `{"label", "pin", "role"}` — `role` defaults to `reception` |
+| PATCH | `/api/v1/users/{id}` | admin | `pin` is write-only (omit to leave unchanged); rejects demoting/deactivating the last active admin |
+| DELETE | `/api/v1/users/{id}` | admin | Hard delete; rejects deleting the last active admin |
+
 ## Reservations
 
 | Method | Path | Auth | Notes |
