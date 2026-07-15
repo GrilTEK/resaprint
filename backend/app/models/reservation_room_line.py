@@ -25,4 +25,9 @@ class ReservationRoomLine(Base):
     price_per_night: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     price_total: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
 
+    assigned_room_id: Mapped[int | None] = mapped_column(
+        ForeignKey("rooms.id", ondelete="SET NULL"), nullable=True
+    )
+
     reservation: Mapped["Reservation"] = relationship(back_populates="room_lines")  # noqa: F821
+    assigned_room: Mapped["Room | None"] = relationship(foreign_keys=[assigned_room_id])  # noqa: F821

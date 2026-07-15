@@ -7,6 +7,7 @@
   <div class="form-row"><label>Check-out</label>{{ reservation.checkout }}</div>
   {% if not reservation.room_lines %}
   <div class="form-row"><label>Room type</label>{{ reservation.room_type or "-" }}</div>
+  <div class="form-row"><label>Assigned room</label>{{ reservation.assigned_room.room_number if reservation.assigned_room else "unassigned" }}</div>
   {% endif %}
   <div class="form-row"><label>Source channel</label>{{ reservation.source_channel }}</div>
   <div class="form-row"><label>Reference</label>{{ reservation.external_ref or "-" }}</div>
@@ -18,11 +19,12 @@
 <div class="card">
   <h2>Room lines</h2>
   <table>
-    <thead><tr><th>Room type</th><th>Nights</th><th>Price/night</th><th>Line total</th></tr></thead>
+    <thead><tr><th>Room type</th><th>Assigned room</th><th>Nights</th><th>Price/night</th><th>Line total</th></tr></thead>
     <tbody>
       {% for line in reservation.room_lines %}
       <tr>
         <td>{{ line.room_type }}</td>
+        <td>{{ line.assigned_room.room_number if line.assigned_room else "unassigned" }}</td>
         <td>{{ line.nights or "-" }}</td>
         <td>{{ line.price_per_night or "-" }}</td>
         <td>{{ line.price_total or "-" }}</td>
@@ -32,6 +34,13 @@
   </table>
 </div>
 {% endif %}
+
+<div class="card">
+  <h2>Room assignment</h2>
+  <form hx-post="/reservations/{{ reservation.id }}/reassign-room" hx-target="body">
+    <button type="submit" class="secondary">Reassign room</button>
+  </form>
+</div>
 
 <div class="card">
   <h2>Print</h2>

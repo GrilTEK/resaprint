@@ -48,10 +48,32 @@ reception can call it.
 |---|---|---|---|
 | GET | `/api/v1/reservations` | admin | Filters: `status_filter`, `source_channel`, `checkin_from`, `checkin_to` |
 | GET | `/api/v1/reservations/{id}` | admin | |
-| POST | `/api/v1/reservations` | admin | Manual creation, `status` forced to `manual` |
+| POST | `/api/v1/reservations` | admin | Manual creation, `status` forced to `manual`. A room is auto-assigned on creation (see Rooms below) |
 | PATCH | `/api/v1/reservations/{id}` | admin | Partial update; logged to audit log as `reservation.manual_override` |
 | DELETE | `/api/v1/reservations/{id}` | admin | Soft-cancel (`status = cancelled`), does not delete the row |
 | POST | `/api/v1/reservations/{id}/print` | admin | Body: `{"station_id": <int>}`. Renders a receipt and enqueues (and, for LAN stations, immediately sends) a print job |
+| POST | `/api/v1/reservations/{id}/reassign-room` | admin | Clears any current room assignment and re-runs auto-assignment — use after adding new rooms or freeing up a conflicting stay |
+
+## Rooms
+
+Physical rooms in the property, each with a free-text `category` that
+is matched (exact string) against `Reservation.room_type` /
+`ReservationRoomLine.room_type` to auto-assign a free room whenever a
+reservation is created — either via manual creation (`POST
+/api/v1/reservations`) or on email ingestion. A room is "free" for a
+given stay if no other non-cancelled reservation (or room line, for
+multi-room bookings) already assigned to it has overlapping dates.
+Assignment is best-effort: if no room of the matching category is
+free, the reservation/room-line is simply left unassigned and can be
+fixed later (add a room, cancel the conflicting stay, then call
+`reassign-room`).
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/api/v1/rooms` | admin | |
+| POST | `/api/v1/rooms` | admin | `{"room_number", "category", "floor"?, "notes"?}` |
+| PATCH | `/api/v1/rooms/{id}` | admin | Partial update, incl. `is_active` |
+| DELETE | `/api/v1/rooms/{id}` | admin | Hard delete; any reservation/room-line assigned to it is unassigned (not deleted) |
 
 ## Print jobs
 

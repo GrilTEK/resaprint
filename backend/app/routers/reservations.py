@@ -9,6 +9,7 @@ from app.deps import get_db, require_admin_session
 from app.models.admin_pin import AdminPin
 from app.models.print_station import PrintStation
 from app.models.reservation import Reservation, ReservationStatus
+from app.models.reservation_room_line import ReservationRoomLine
 from app.schemas.reservation import (
     PrintRequest,
     ReservationCreate,
@@ -17,6 +18,7 @@ from app.schemas.reservation import (
 )
 from app.services import audit, printing
 from app.services.app_settings import get_or_create_settings
+from app.services.room_assignment import assign_rooms_for_reservation, reassign_rooms_for_reservation
 
 router = APIRouter(prefix="/api/v1/reservations", tags=["reservations"])
 
@@ -65,6 +67,7 @@ async def create_reservation(
     reservation = Reservation(**payload.model_dump(), status=ReservationStatus.manual)
     db.add(reservation)
     await db.flush()
+    await assign_rooms_for_reservation(db, reservation)
     await audit.log(
         db, actor=admin.label, action="reservation.created_manual", entity_type="reservation", entity_id=reservation.id
     )
@@ -128,7 +131,12 @@ async def print_reservation(
 ) -> dict:
     reservation = (
         await db.execute(
-            select(Reservation).options(selectinload(Reservation.room_lines)).where(Reservation.id == reservation_id)
+            select(Reservation)
+            .options(
+                selectinload(Reservation.room_lines).selectinload(ReservationRoomLine.assigned_room),
+                selectinload(Reservation.assigned_room),
+            )
+            .where(Reservation.id == reservation_id)
         )
     ).scalar_one_or_none()
     if reservation is None:
@@ -158,3 +166,28 @@ async def print_reservation(
     )
     await db.commit()
     return {"print_job_id": job.id, "status": job.status.value}
+
+
+@router.post("/{reservation_id}/reassign-room", response_model=ReservationOut)
+async def reassign_room(
+    reservation_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_session),
+) -> Reservation:
+    """Clear the current auto-assignment and re-run it — useful after
+    adding new rooms or freeing up a conflicting stay."""
+    reservation = (
+        await db.execute(
+            select(Reservation).options(selectinload(Reservation.room_lines)).where(Reservation.id == reservation_id)
+        )
+    ).scalar_one_or_none()
+    if reservation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="reservation not found")
+
+    await reassign_rooms_for_reservation(db, reservation)
+    await audit.log(
+        db, actor=admin.label, action="reservation.room_reassigned", entity_type="reservation", entity_id=reservation.id
+    )
+    await db.commit()
+    await db.refresh(reservation)
+    return reservation

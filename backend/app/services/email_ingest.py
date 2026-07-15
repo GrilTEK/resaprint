@@ -37,6 +37,7 @@ from app.services.app_settings import get_or_create_settings
 from app.services.crypto import decrypt
 from app.services.parser_registry import GenericFieldMappingParser, ParserError, ParserRegistry
 from app.services.parsers.reference_booking_com import ReferenceBookingComParser
+from app.services.room_assignment import assign_rooms_for_reservation
 
 logger = logging.getLogger("resaprint.email_ingest")
 
@@ -232,6 +233,7 @@ async def _process_email(
         )
     db.add(reservation)
     await db.flush()
+    await assign_rooms_for_reservation(db, reservation)
     await audit.log(
         db,
         actor="system",
@@ -271,12 +273,22 @@ async def _maybe_auto_print(db: AsyncSession, reservation: Reservation) -> None:
         return
 
     try:
-        # room_lines may never have been touched in-memory if the parser
-        # produced none (the loop that appends them simply never ran) —
-        # explicitly (and async-safely) load it before the sync
-        # build_reservation_receipt call accesses it, otherwise SQLAlchemy
-        # attempts a lazy load outside of a greenlet context and crashes.
-        await db.refresh(reservation, attribute_names=["room_lines"])
+        # room_lines/assigned_room may never have been touched in-memory
+        # (e.g. the parser produced no room lines, or assignment found no
+        # free room) — explicitly (and async-safely) load them before the
+        # sync build_reservation_receipt call accesses them, otherwise
+        # SQLAlchemy attempts a lazy load outside of a greenlet context
+        # and crashes.
+        reservation = (
+            await db.execute(
+                select(Reservation)
+                .options(
+                    selectinload(Reservation.room_lines).selectinload(ReservationRoomLine.assigned_room),
+                    selectinload(Reservation.assigned_room),
+                )
+                .where(Reservation.id == reservation.id)
+            )
+        ).scalar_one()
         text_summary, escpos_bytes = printing.build_reservation_receipt(reservation, station, app_settings)
         job = await printing.enqueue_print_job(
             db,

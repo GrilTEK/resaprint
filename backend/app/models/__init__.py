@@ -11,6 +11,7 @@ from app.models.print_job import PrintJob, PrintJobStatus
 from app.models.print_station import PrintStation, StationConnectionType
 from app.models.reservation import Reservation, ReservationStatus
 from app.models.reservation_room_line import ReservationRoomLine
+from app.models.room import Room
 
 __all__ = [
     "AdminPin",
@@ -27,4 +28,5 @@ __all__ = [
     "Reservation",
     "ReservationRoomLine",
     "ReservationStatus",
+    "Room",
 ]

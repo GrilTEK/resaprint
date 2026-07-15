@@ -20,6 +20,8 @@ from app.models.parser_mapping import (
 from app.models.print_job import PrintJob
 from app.models.print_station import PrintStation, StationConnectionType
 from app.models.reservation import Reservation
+from app.models.reservation_room_line import ReservationRoomLine
+from app.models.room import Room
 from app.schemas.config import config_out_from_row
 from app.schemas.parser import PARSED_RESERVATION_FIELDS
 from app.services import audit, printing
@@ -27,6 +29,7 @@ from app.services.app_settings import get_or_create_settings
 from app.services.auth_service import hash_pin
 from app.services.crypto import encrypt
 from app.services.parser_registry import GenericFieldMappingParser
+from app.services.room_assignment import reassign_rooms_for_reservation
 
 router = APIRouter(tags=["admin-ui"])
 templates = Jinja2Templates(directory="app/templates")
@@ -78,7 +81,12 @@ async def reservation_detail_page(
 ):
     reservation = (
         await db.execute(
-            select(Reservation).options(selectinload(Reservation.room_lines)).where(Reservation.id == reservation_id)
+            select(Reservation)
+            .options(
+                selectinload(Reservation.room_lines).selectinload(ReservationRoomLine.assigned_room),
+                selectinload(Reservation.assigned_room),
+            )
+            .where(Reservation.id == reservation_id)
         )
     ).scalar_one_or_none()
     stations = (
@@ -99,7 +107,12 @@ async def reservation_print_action(
 ):
     reservation = (
         await db.execute(
-            select(Reservation).options(selectinload(Reservation.room_lines)).where(Reservation.id == reservation_id)
+            select(Reservation)
+            .options(
+                selectinload(Reservation.room_lines).selectinload(ReservationRoomLine.assigned_room),
+                selectinload(Reservation.assigned_room),
+            )
+            .where(Reservation.id == reservation_id)
         )
     ).scalar_one_or_none()
     station = await db.get(PrintStation, station_id)
@@ -540,4 +553,112 @@ async def toggle_user_active_action(
     users = (await db.execute(select(AdminPin).order_by(AdminPin.label))).scalars().all()
     return templates.TemplateResponse(
         request, "users/list.html", {"admin": admin, "users": users, "roles": list(AdminRole), "error": error}
+    )
+
+
+@router.get("/rooms")
+async def rooms_page(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_role_html),
+):
+    rooms = (await db.execute(select(Room).order_by(Room.room_number))).scalars().all()
+    return templates.TemplateResponse(request, "rooms/list.html", {"admin": admin, "rooms": rooms})
+
+
+@router.post("/rooms")
+async def create_room_action(
+    request: Request,
+    room_number: str = Form(...),
+    category: str = Form(...),
+    floor: str = Form(default=""),
+    notes: str = Form(default=""),
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_role_html),
+):
+    room = Room(room_number=room_number, category=category, floor=floor or None, notes=notes or None)
+    db.add(room)
+    await db.flush()
+    await audit.log(db, actor=admin.label, action="room.created", entity_type="room", entity_id=room.id)
+    await db.commit()
+
+    rooms = (await db.execute(select(Room).order_by(Room.room_number))).scalars().all()
+    return templates.TemplateResponse(request, "rooms/list.html", {"admin": admin, "rooms": rooms})
+
+
+@router.post("/rooms/{room_id}/toggle-active")
+async def toggle_room_active_action(
+    room_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_role_html),
+):
+    room = await db.get(Room, room_id)
+    if room is not None:
+        room.is_active = not room.is_active
+        await audit.log(
+            db, actor=admin.label, action="room.updated", entity_type="room", entity_id=room.id,
+            detail={"is_active": room.is_active},
+        )
+        await db.commit()
+
+    rooms = (await db.execute(select(Room).order_by(Room.room_number))).scalars().all()
+    return templates.TemplateResponse(request, "rooms/list.html", {"admin": admin, "rooms": rooms})
+
+
+@router.post("/rooms/{room_id}/delete")
+async def delete_room_action(
+    room_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_role_html),
+):
+    room = await db.get(Room, room_id)
+    if room is not None:
+        await audit.log(
+            db, actor=admin.label, action="room.deleted", entity_type="room", entity_id=room.id,
+            detail={"room_number": room.room_number},
+        )
+        await db.delete(room)
+        await db.commit()
+
+    rooms = (await db.execute(select(Room).order_by(Room.room_number))).scalars().all()
+    return templates.TemplateResponse(request, "rooms/list.html", {"admin": admin, "rooms": rooms})
+
+
+@router.post("/reservations/{reservation_id}/reassign-room")
+async def reassign_room_action(
+    reservation_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_session_html),
+):
+    reservation = (
+        await db.execute(
+            select(Reservation).options(selectinload(Reservation.room_lines)).where(Reservation.id == reservation_id)
+        )
+    ).scalar_one_or_none()
+    if reservation is not None:
+        await reassign_rooms_for_reservation(db, reservation)
+        await audit.log(
+            db, actor=admin.label, action="reservation.room_reassigned", entity_type="reservation",
+            entity_id=reservation.id,
+        )
+        await db.commit()
+
+    reservation = (
+        await db.execute(
+            select(Reservation)
+            .options(
+                selectinload(Reservation.room_lines).selectinload(ReservationRoomLine.assigned_room),
+                selectinload(Reservation.assigned_room),
+            )
+            .where(Reservation.id == reservation_id)
+        )
+    ).scalar_one_or_none()
+    stations = (
+        await db.execute(select(PrintStation).where(PrintStation.is_active.is_(True)).order_by(PrintStation.name))
+    ).scalars().all()
+    return templates.TemplateResponse(
+        request, "reservations/detail.html", {"admin": admin, "reservation": reservation, "stations": stations}
     )

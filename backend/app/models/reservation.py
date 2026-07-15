@@ -3,7 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, Date, DateTime, Enum, Numeric, String, Text, func
+from sqlalchemy import JSON, Date, DateTime, Enum, ForeignKey, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -11,6 +11,7 @@ from app.db import Base
 if TYPE_CHECKING:
     from app.models.print_job import PrintJob
     from app.models.reservation_room_line import ReservationRoomLine
+    from app.models.room import Room
 
 
 class ReservationStatus(str, enum.Enum):
@@ -49,6 +50,13 @@ class Reservation(Base):
     raw_source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     extra_fields: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
+    # Auto-assigned physical room for the single-room_type legacy path
+    # (manual reservations with no room_lines). Multi-room bookings
+    # assign per-line instead — see ReservationRoomLine.assigned_room_id.
+    assigned_room_id: Mapped[int | None] = mapped_column(
+        ForeignKey("rooms.id", ondelete="SET NULL"), nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -60,3 +68,4 @@ class Reservation(Base):
         cascade="all, delete-orphan",
         order_by="ReservationRoomLine.sort_order",
     )
+    assigned_room: Mapped["Room | None"] = relationship(foreign_keys=[assigned_room_id])

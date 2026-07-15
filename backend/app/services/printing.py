@@ -74,7 +74,10 @@ def build_reservation_receipt(
     if reservation.room_lines:
         builder.divider(width)
         for line in reservation.room_lines:
-            builder.line(line.room_type)
+            room_label = line.room_type
+            if line.assigned_room is not None:
+                room_label += f" (Room {line.assigned_room.room_number})"
+            builder.line(room_label)
             if line.nights is not None:
                 builder.kv_line("  Nights:", str(line.nights), width=width)
             if line.price_per_night is not None:
@@ -82,12 +85,15 @@ def build_reservation_receipt(
             if line.price_total is not None:
                 builder.kv_line("  Line total:", f"{reservation.price_currency} {line.price_total}", width=width)
             text_lines.append(
-                f"Room: {line.room_type} | nights={line.nights or '-'} "
+                f"Room: {room_label} | nights={line.nights or '-'} "
                 f"per_night={line.price_per_night or '-'} total={line.price_total or '-'}"
             )
     elif reservation.room_type:
-        builder.kv_line("Room:", reservation.room_type, width=width)
-        text_lines.append(f"Room: {reservation.room_type}")
+        room_label = reservation.room_type
+        if reservation.assigned_room is not None:
+            room_label += f" (Room {reservation.assigned_room.room_number})"
+        builder.kv_line("Room:", room_label, width=width)
+        text_lines.append(f"Room: {room_label}")
 
     if reservation.price_total is not None:
         builder.divider(width)

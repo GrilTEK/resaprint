@@ -26,6 +26,7 @@ class ReservationOut(BaseModel):
     price_currency: str
     status: ReservationStatus
     extra_fields: dict[str, Any] | None
+    assigned_room_id: int | None
     created_at: datetime
     updated_at: datetime
 

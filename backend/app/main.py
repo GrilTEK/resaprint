@@ -12,6 +12,7 @@ from app.routers import (
     parsers,
     print_jobs,
     reservations,
+    rooms,
     stations,
     users,
 )
@@ -40,4 +41,5 @@ app.include_router(parsers.router)
 app.include_router(audit_log.router)
 app.include_router(config.router)
 app.include_router(users.router)
+app.include_router(rooms.router)
 app.include_router(admin_ui.router)

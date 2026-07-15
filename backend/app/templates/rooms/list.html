@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Rooms — ResaPrint{% endblock %}
+{% block content %}
+<h1>Rooms</h1>
+<p>Rooms and their categories are used to auto-assign an incoming reservation to a free room of the matching category.</p>
+
+<div class="card">
+  <table>
+    <thead><tr><th>Room #</th><th>Category</th><th>Floor</th><th>Notes</th><th>Active</th><th></th></tr></thead>
+    <tbody>
+      {% for r in rooms %}
+      <tr>
+        <td>{{ r.room_number }}</td>
+        <td>{{ r.category }}</td>
+        <td>{{ r.floor or "-" }}</td>
+        <td>{{ r.notes or "-" }}</td>
+        <td>{{ "yes" if r.is_active else "no" }}</td>
+        <td>
+          <button hx-post="/rooms/{{ r.id }}/toggle-active" hx-target="body" class="secondary">
+            {{ "Deactivate" if r.is_active else "Activate" }}
+          </button>
+          <button
+            hx-post="/rooms/{{ r.id }}/delete"
+            hx-target="body"
+            hx-confirm="Delete room &quot;{{ r.room_number }}&quot;? Any reservations currently assigned to it will be unassigned."
+            class="secondary"
+            style="background: var(--danger); color: #fff;"
+          >Delete</button>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6">No rooms yet — add the property's rooms below.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Add room</h2>
+  <form hx-post="/rooms" hx-target="body">
+    <div class="form-row">
+      <label>Room number</label>
+      <input type="text" name="room_number" required>
+    </div>
+    <div class="form-row">
+      <label>Category</label>
+      <input type="text" name="category" required placeholder="e.g. Double Room">
+    </div>
+    <div class="form-row">
+      <label>Floor</label>
+      <input type="text" name="floor">
+    </div>
+    <div class="form-row">
+      <label>Notes</label>
+      <input type="text" name="notes">
+    </div>
+    <button type="submit">Add room</button>
+  </form>
+</div>
+{% endblock %}
