@@ -68,6 +68,51 @@
     {% endif %}
   </div>
 
+  <div class="card">
+    <h2>Receipt layout</h2>
+    <p style="color: #666; font-size: 0.85rem;">
+      Applies to every printed receipt (LAN and USB agent stations alike).
+    </p>
+    <div class="form-row">
+      <label>Font</label>
+      <select name="receipt_font">
+        <option value="font_a" {% if config.receipt_font == "font_a" %}selected{% endif %}>Font A (standard)</option>
+        <option value="font_b" {% if config.receipt_font == "font_b" %}selected{% endif %}>Font B (condensed)</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>Text size</label>
+      <select name="receipt_font_size">
+        <option value="normal" {% if config.receipt_font_size == "normal" %}selected{% endif %}>Normal</option>
+        <option value="large" {% if config.receipt_font_size == "large" %}selected{% endif %}>Large (2x)</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>
+        <input type="checkbox" name="receipt_bold_labels" {% if config.receipt_bold_labels %}checked{% endif %} style="width: auto;">
+        Bold field labels (Guest:, Check-in:, ...)
+      </label>
+    </div>
+    <div class="form-row">
+      <label>
+        <input type="checkbox" name="receipt_show_nights" {% if config.receipt_show_nights %}checked{% endif %} style="width: auto;">
+        Show number of nights
+      </label>
+    </div>
+    <div class="form-row">
+      <label>
+        <input type="checkbox" name="receipt_show_guests" {% if config.receipt_show_guests %}checked{% endif %} style="width: auto;">
+        Show number of guests
+      </label>
+    </div>
+    <div class="form-row">
+      <label>
+        <input type="checkbox" name="receipt_show_channel" {% if config.receipt_show_channel %}checked{% endif %} style="width: auto;">
+        Show source channel (e.g. booking_com_cubilis)
+      </label>
+    </div>
+  </div>
+
   <button type="submit">Save</button>
 </form>
 {% endblock %}

@@ -14,11 +14,17 @@ ESC = b"\x1b"
 GS = b"\x1d"
 
 Align = Literal["left", "center", "right"]
+Font = Literal["font_a", "font_b"]
 
 _ALIGN_CODES: dict[Align, bytes] = {
     "left": b"\x00",
     "center": b"\x01",
     "right": b"\x02",
+}
+
+_FONT_CODES: dict[Font, bytes] = {
+    "font_a": b"\x00",
+    "font_b": b"\x01",
 }
 
 
@@ -32,6 +38,10 @@ def align(mode: Align) -> bytes:
 
 def bold(on: bool) -> bytes:
     return ESC + b"E" + (b"\x01" if on else b"\x00")
+
+
+def font_select(mode: Font) -> bytes:
+    return ESC + b"M" + _FONT_CODES[mode]
 
 
 def text_size(width: int, height: int) -> bytes:
@@ -52,8 +62,9 @@ def encode_line(text: str, codepage: str = "cp437") -> bytes:
 
 
 class ReceiptBuilder:
-    def __init__(self, codepage: str = "cp437") -> None:
+    def __init__(self, codepage: str = "cp437", bold_labels: bool = False) -> None:
         self._codepage = codepage
+        self._bold_labels = bold_labels
         self._buf = bytearray(init())
 
     def align_left(self) -> ReceiptBuilder:
@@ -68,6 +79,14 @@ class ReceiptBuilder:
         self._buf += align("right")
         return self
 
+    def set_font(self, mode: Font) -> ReceiptBuilder:
+        self._buf += font_select(mode)
+        return self
+
+    def set_text_size(self, width: int = 1, height: int = 1) -> ReceiptBuilder:
+        self._buf += text_size(width, height)
+        return self
+
     def bold_line(self, text: str) -> ReceiptBuilder:
         self._buf += bold(True)
         self._buf += encode_line(text, self._codepage)
@@ -80,7 +99,13 @@ class ReceiptBuilder:
 
     def kv_line(self, label: str, value: str, width: int = 42) -> ReceiptBuilder:
         gap = max(1, width - len(label) - len(value))
-        self._buf += encode_line(f"{label}{' ' * gap}{value}", self._codepage)
+        if self._bold_labels:
+            self._buf += bold(True)
+            self._buf += label.encode(self._codepage, errors="replace")
+            self._buf += bold(False)
+            self._buf += f"{' ' * gap}{value}\n".encode(self._codepage, errors="replace")
+        else:
+            self._buf += encode_line(f"{label}{' ' * gap}{value}", self._codepage)
         return self
 
     def divider(self, width: int = 42, char: str = "-") -> ReceiptBuilder:

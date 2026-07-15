@@ -17,6 +17,35 @@ async def test_get_config_seeds_defaults_on_first_access(authed_client: AsyncCli
     assert body["imap_has_password"] is False
     assert body["auto_print_enabled"] is False
     assert body["auto_print_station_id"] is None
+    assert body["receipt_font"] == "font_a"
+    assert body["receipt_font_size"] == "normal"
+    assert body["receipt_show_nights"] is True
+    assert body["receipt_show_guests"] is True
+    assert body["receipt_show_channel"] is True
+    assert body["receipt_bold_labels"] is False
+
+
+@pytest.mark.asyncio
+async def test_patch_config_updates_receipt_layout(authed_client: AsyncClient):
+    response = await authed_client.patch(
+        "/api/v1/config",
+        json={
+            "receipt_font": "font_b",
+            "receipt_font_size": "large",
+            "receipt_bold_labels": True,
+            "receipt_show_nights": False,
+            "receipt_show_guests": False,
+            "receipt_show_channel": False,
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["receipt_font"] == "font_b"
+    assert body["receipt_font_size"] == "large"
+    assert body["receipt_bold_labels"] is True
+    assert body["receipt_show_nights"] is False
+    assert body["receipt_show_guests"] is False
+    assert body["receipt_show_channel"] is False
 
 
 @pytest.mark.asyncio

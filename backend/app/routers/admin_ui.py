@@ -20,7 +20,7 @@ from app.models.parser_mapping import (
 from app.models.print_job import PrintJob
 from app.models.print_station import PrintStation, StationConnectionType
 from app.models.reservation import Reservation
-from app.schemas.config import ConfigOut
+from app.schemas.config import config_out_from_row
 from app.schemas.parser import PARSED_RESERVATION_FIELDS
 from app.services import audit, printing
 from app.services.app_settings import get_or_create_settings
@@ -29,21 +29,7 @@ from app.services.parser_registry import GenericFieldMappingParser
 
 router = APIRouter(tags=["admin-ui"])
 templates = Jinja2Templates(directory="app/templates")
-
-
-def _config_out(row) -> ConfigOut:
-    return ConfigOut(
-        imap_host=row.imap_host,
-        imap_port=row.imap_port,
-        imap_user=row.imap_user,
-        imap_has_password=bool(row.imap_password_encrypted),
-        imap_folder=row.imap_folder,
-        imap_processed_folder=row.imap_processed_folder,
-        imap_poll_seconds=row.imap_poll_seconds,
-        auto_print_enabled=row.auto_print_enabled,
-        auto_print_station_id=row.auto_print_station_id,
-    )
-
+_config_out = config_out_from_row
 
 _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -121,7 +107,8 @@ async def reservation_print_action(
             request, "reservations/_print_status.html", {"error": "reservation or station not found"}
         )
 
-    text_summary, escpos_bytes = printing.build_reservation_receipt(reservation, station)
+    app_settings = await get_or_create_settings(db)
+    text_summary, escpos_bytes = printing.build_reservation_receipt(reservation, station, app_settings)
     job = await printing.enqueue_print_job(
         db,
         station=station,
@@ -414,6 +401,12 @@ async def settings_update_action(
     imap_poll_seconds: int = Form(default=60),
     auto_print_enabled: bool = Form(default=False),
     auto_print_station_id: str = Form(default=""),
+    receipt_font: str = Form(default="font_a"),
+    receipt_font_size: str = Form(default="normal"),
+    receipt_bold_labels: bool = Form(default=False),
+    receipt_show_nights: bool = Form(default=False),
+    receipt_show_guests: bool = Form(default=False),
+    receipt_show_channel: bool = Form(default=False),
     db: AsyncSession = Depends(get_db),
     admin: AdminPin = Depends(require_admin_session_html),
 ):
@@ -429,6 +422,13 @@ async def settings_update_action(
 
     row.auto_print_enabled = auto_print_enabled
     row.auto_print_station_id = int(auto_print_station_id) if auto_print_station_id else None
+
+    row.receipt_font = receipt_font
+    row.receipt_font_size = receipt_font_size
+    row.receipt_bold_labels = receipt_bold_labels
+    row.receipt_show_nights = receipt_show_nights
+    row.receipt_show_guests = receipt_show_guests
+    row.receipt_show_channel = receipt_show_channel
 
     await audit.log(db, actor=admin.label, action="config.updated", entity_type="app_settings", entity_id=row.id)
     await db.commit()

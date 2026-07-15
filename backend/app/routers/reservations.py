@@ -16,6 +16,7 @@ from app.schemas.reservation import (
     ReservationUpdate,
 )
 from app.services import audit, printing
+from app.services.app_settings import get_or_create_settings
 
 router = APIRouter(prefix="/api/v1/reservations", tags=["reservations"])
 
@@ -137,7 +138,8 @@ async def print_reservation(
     if station is None or not station.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="station not found or inactive")
 
-    text_summary, escpos_bytes = printing.build_reservation_receipt(reservation, station)
+    app_settings = await get_or_create_settings(db)
+    text_summary, escpos_bytes = printing.build_reservation_receipt(reservation, station, app_settings)
     job = await printing.enqueue_print_job(
         db,
         station=station,

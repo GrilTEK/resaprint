@@ -1,4 +1,4 @@
-from app.services.escpos_builder import ReceiptBuilder, align, bold, cut, feed, init, text_size
+from app.services.escpos_builder import ReceiptBuilder, align, bold, cut, feed, font_select, init, text_size
 
 
 def test_init_bytes():
@@ -68,3 +68,32 @@ def test_non_latin1_chars_are_replaced_not_raising():
     receipt = ReceiptBuilder().line("Renée Müller 中文").build()
     assert receipt.endswith(b"\n")
     assert b"?" in receipt or b"e" in receipt
+
+
+def test_font_select_codes():
+    assert font_select("font_a") == b"\x1bM\x00"
+    assert font_select("font_b") == b"\x1bM\x01"
+
+
+def test_set_font_and_set_text_size_chainable():
+    receipt = ReceiptBuilder().set_font("font_b").set_text_size(2, 2).line("Hi").build()
+    expected = init() + font_select("font_b") + text_size(2, 2) + "Hi\n".encode("cp437")
+    assert receipt == expected
+
+
+def test_kv_line_bold_labels_wraps_only_label_in_bold():
+    receipt = ReceiptBuilder(bold_labels=True).kv_line("Guest:", "Jane Doe", width=20).build()
+    gap = 20 - len("Guest:") - len("Jane Doe")
+    expected = (
+        init()
+        + bold(True)
+        + "Guest:".encode("cp437")
+        + bold(False)
+        + f"{' ' * gap}Jane Doe\n".encode("cp437")
+    )
+    assert receipt == expected
+
+
+def test_kv_line_default_not_bold():
+    receipt = ReceiptBuilder(bold_labels=False).kv_line("Guest:", "Jane Doe", width=20).build()
+    assert bold(True) not in receipt

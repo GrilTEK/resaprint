@@ -38,6 +38,15 @@ class AppSettings(Base):
         ForeignKey("print_stations.id", ondelete="SET NULL"), nullable=True
     )
 
+    # Receipt layout — applied to every printed receipt (LAN + USB
+    # agent alike), global rather than per-station for simplicity.
+    receipt_font: Mapped[str] = mapped_column(String(10), default="font_a")  # "font_a" | "font_b"
+    receipt_font_size: Mapped[str] = mapped_column(String(10), default="normal")  # "normal" | "large"
+    receipt_bold_labels: Mapped[bool] = mapped_column(Boolean, default=False)
+    receipt_show_nights: Mapped[bool] = mapped_column(Boolean, default=True)
+    receipt_show_guests: Mapped[bool] = mapped_column(Boolean, default=True)
+    receipt_show_channel: Mapped[bool] = mapped_column(Boolean, default=True)
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

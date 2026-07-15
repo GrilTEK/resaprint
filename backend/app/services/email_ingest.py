@@ -277,7 +277,7 @@ async def _maybe_auto_print(db: AsyncSession, reservation: Reservation) -> None:
         # build_reservation_receipt call accesses it, otherwise SQLAlchemy
         # attempts a lazy load outside of a greenlet context and crashes.
         await db.refresh(reservation, attribute_names=["room_lines"])
-        text_summary, escpos_bytes = printing.build_reservation_receipt(reservation, station)
+        text_summary, escpos_bytes = printing.build_reservation_receipt(reservation, station, app_settings)
         job = await printing.enqueue_print_job(
             db,
             station=station,
