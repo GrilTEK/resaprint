@@ -51,6 +51,8 @@ def build_reservation_receipt(
     builder.set_font(font)  # type: ignore[arg-type]
     if font_size == "large":
         builder.set_text_size(2, 2)
+    elif font_size == "xlarge":
+        builder.set_text_size(3, 3)
 
     header = f"{reservation.source_channel.upper()} REZERVACIJA" if show_channel else "REZERVACIJA"
     builder.align_center().bold_line(header)
@@ -114,6 +116,10 @@ def build_reservation_receipt(
     if reservation.price_total is not None:
         builder.kv_line("SKUPAJ:", f"{reservation.price_currency} {reservation.price_total}", width=width)
         text_lines.append(f"SKUPAJ: {reservation.price_currency} {reservation.price_total}")
+        if nights > 0:
+            avg_per_night = reservation.price_total / nights
+            builder.kv_line("Povp./noč:", f"{reservation.price_currency} {avg_per_night:.2f}", width=width)
+            text_lines.append(f"Povp./noč: {reservation.price_currency} {avg_per_night:.2f}")
         builder.divider(width)
         text_lines.append("-" * width)
     builder.kv_line("Reservation nr.:", reservation.external_ref or "-", width=width)

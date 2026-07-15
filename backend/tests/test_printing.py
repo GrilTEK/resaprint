@@ -169,6 +169,22 @@ def test_receipt_applies_large_font_size_setting():
     assert text_size(2, 2) in escpos_bytes
 
 
+def test_receipt_applies_xlarge_font_size_setting():
+    from app.services.escpos_builder import text_size
+
+    app_settings = _app_settings(receipt_font_size="xlarge")
+
+    _, escpos_bytes = build_reservation_receipt(_reservation(), _station(), app_settings)
+
+    assert text_size(3, 3) in escpos_bytes
+
+
+def test_receipt_includes_avg_per_night():
+    text_summary, _ = build_reservation_receipt(_reservation(), _station())
+
+    assert "Povp./noč: EUR 100.00" in text_summary
+
+
 def test_receipt_shows_reservation_number_or_dash():
     text_summary, _ = build_reservation_receipt(_reservation(external_ref="12345"), _station())
     assert "Reservation nr.: 12345" in text_summary
