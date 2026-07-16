@@ -1,28 +1,35 @@
 # Windows client guide
 
-## What gets installed
+## What you download: one file
 
-Three Windows executables, all self-contained single-file `net8.0-windows`
-`win-x64` builds (no .NET runtime needs to be pre-installed on the
-target machine):
+The only thing you ever need to download is **`ResaPrint.Installer.exe`**
+from the repo's Releases page — a single self-contained `win-x64`
+build (no .NET runtime needs to be pre-installed on the target
+machine). `ResaPrint.Agent.exe` and `ResaPrint.Tray.exe` are bundled
+*inside* it as embedded resources and get extracted to
+`%ProgramFiles%\ResaPrint\` when you run the installer — there is
+nothing else to extract, place side-by-side, or keep around. The same
+exe also uninstalls (see below), so the whole client lifecycle — pair,
+install, reconfigure, uninstall — is one file.
+
+## What gets installed
 
 - **`ResaPrint.Agent.exe`** — installed as a Windows Service named
   `ResaPrintAgent`, running as `LocalSystem`. This is the actual print
   engine: it polls the backend for queued print jobs targeted at this
-  station, renders them to ESC/POS bytes, and sends them to a
-  USB-attached receipt printer via the Windows print spooler's RAW
-  datatype (bypassing GDI rendering entirely). Because it runs as
-  `LocalSystem` with `start= delayed-auto` and an explicit `depend=
-  Spooler` dependency, it starts automatically on boot — before or
-  without anyone logging into Windows — and only after the Print
+  station, renders them, and sends them to a USB-attached receipt
+  printer (see "Print modes" below for exactly how). Because it runs
+  as `LocalSystem` with `start= delayed-auto` and an explicit `depend=
+  Spooler` dependency, it starts automatically on boot — **before or
+  without anyone logging into Windows** — and only after the Print
   Spooler service itself is up, so a reboot never leaves it trying to
-  print before the spooler is ready.
+  print before the spooler is ready. This is what makes printing work
+  continuously and unattended, regardless of whether any user session
+  is active.
 - **`ResaPrint.Tray.exe`** — a status-only tray icon, auto-started at
   logon via a Scheduled Task. It has no printing logic and no way to
   stop the Agent — closing or killing the tray icon has zero effect on
-  the service.
-- **`ResaPrint.Installer.exe`** — an optional graphical setup wizard
-  (see below) as an alternative to running `install.ps1` by hand.
+  the service (which keeps running with nobody logged in at all).
 
 ### What "cannot be closed" actually means
 
@@ -79,17 +86,17 @@ Always send a **Test Print** after switching to confirm the physical
 output looks right — `gdi_text` output depends entirely on the printer
 driver actually being GDI-capable, not a RAW-passthrough queue.
 
-## Install (GUI — recommended)
+## Install
 
 This machine is a normal Windows PC on the same LAN as the backend
 (the backend itself typically runs in a container on Proxmox
 elsewhere) — the Agent only needs network access to the backend's URL
 and a USB-connected receipt printer plugged into this PC.
 
-1. Download the release zip from the repo's Releases page and extract
-   it anywhere.
-2. Run **`ResaPrint.Installer.exe`** (it will prompt for administrator
-   elevation — installing a Windows Service requires it).
+1. Download **`ResaPrint.Installer.exe`** from the repo's Releases page
+   — that's the only file you need.
+2. Run it (it will prompt for administrator elevation — installing a
+   Windows Service requires it).
 3. In the window:
    - Enter the **backend URL** (e.g. `http://192.168.1.50:8000`).
    - Pick the **printer** from the dropdown (populated from Windows'
@@ -105,58 +112,24 @@ and a USB-connected receipt printer plugged into this PC.
      and **API key** from the admin UI's Stations page.
    - Click **Install**. Progress and any errors show in the log box.
 
-`ResaPrint.Agent.exe` and `ResaPrint.Tray.exe` must be in the same
-folder as `ResaPrint.Installer.exe` (they ship together in the release
-zip) — the installer copies them into `%ProgramFiles%\ResaPrint\` and
-wires up the service/scheduled task itself, using the same
-`sc.exe`/`schtasks.exe` commands `install.ps1` uses under the hood.
+The installer extracts its bundled `ResaPrint.Agent.exe`/
+`ResaPrint.Tray.exe` to `%ProgramFiles%\ResaPrint\` and wires up the
+service/scheduled task itself via `sc.exe`/`schtasks.exe` — nothing
+needs to sit next to the installer beforehand.
 
 Re-running the installer is safe — it stops the existing service,
 replaces the binaries, and re-registers everything.
 
-## Install (PowerShell — scripted/repeat installs)
+### Scripted / repeat installs (advanced)
 
-Prefer a scriptable, non-interactive install (e.g. for rolling out to
-several PCs), or don't want to run a GUI exe? Use `install.ps1`
-instead — it does exactly the same steps as the GUI installer.
-
-1. Download the release zip from the repo's Releases page (built by
-   `.github/workflows/client-release.yml` on every `client-v*` tag).
-2. Extract it anywhere.
-3. Open an elevated PowerShell prompt in the extracted folder and run:
-
-   ```powershell
-   .\install.ps1 -ApiBaseUrl "http://192.168.1.50:8000" -AdminPin 1234
-   ```
-
-   This one command:
-   - shows a numbered list of installed Windows printers to pick from
-     (no need to type the exact queue name)
-   - optionally sends a test print right there, before anything is
-     installed, so a printer/queue problem is caught immediately
-   - logs in with the admin PIN, creates a new station named after
-     this PC (override with `-StationName "Front Desk PC"`), and pairs
-     it — no manual copy-pasting a station ID/API key out of the admin
-     UI
-   - installs and starts the `ResaPrintAgent` service, and registers
-     the Tray app to start at the next logon
-
-   Prefer to pair manually via the admin UI's Stations page instead?
-   Skip `-AdminPin`/`-StationName` and pass `-StationId`/`-ApiKey`
-   directly:
-
-   ```powershell
-   .\install.ps1 -ApiBaseUrl "http://192.168.1.50:8000" -StationId 3 -ApiKey "<paste the API key here>"
-   ```
-
-   Either way, `-PrinterName "POS-80 Series"` can be passed up front to
-   skip the interactive picker (useful for scripted/repeat installs).
-
-   To start the Tray immediately without logging out:
-   `Start-Process ".\ResaPrint.Tray.exe"`.
-
-Re-running `install.ps1` is safe — it stops the existing service,
-replaces the binary, and re-registers everything.
+The `.ps1` scripts under `client/` in the repo (`install.ps1`,
+`installer\install-agent.ps1`, `installer\update-local-config.ps1`)
+still exist for scripted or repeat installs across many PCs, but they
+are **not part of the release download** — they operate on the
+standalone `ResaPrint.Agent.exe`/`ResaPrint.Tray.exe`, which you'd need
+to build from source yourself (`dotnet publish`, see "Building from
+source" below) rather than downloading pre-built. For a normal
+single-PC install, use `ResaPrint.Installer.exe` instead.
 
 ## Changing local settings later (no re-pairing needed)
 
@@ -186,10 +159,15 @@ it talks directly to the Windows print spooler, nothing else.
 
 ## Uninstall
 
-```powershell
-.\uninstall.ps1              # keeps the DPAPI-encrypted config for a future reinstall
-.\uninstall.ps1 -PurgeConfig # also deletes %ProgramData%\ResaPrint
-```
+Run **`ResaPrint.Installer.exe`** again and click **Uninstall** — the
+same single exe handles removal too. It stops and deletes the
+`ResaPrintAgent` service, removes the Tray scheduled task, and deletes
+`%ProgramFiles%\ResaPrint\`. It then asks separately whether to also
+delete the encrypted local config under `%ProgramData%\ResaPrint`
+(keep it if you plan to reinstall on this machine with the same
+pairing). It does **not** deactivate the station on the backend — do
+that from the admin UI's Stations page if you want the station itself
+gone too.
 
 ## Troubleshooting
 
@@ -207,11 +185,11 @@ Returns JSON: `running`, `configured`, `backendReachable`, `lastPollAt`,
 |---|---|
 | Tray icon is red | `ResaPrintAgent` service isn't running — check `Get-Service ResaPrintAgent`, then Windows Event Viewer / service logs |
 | Tray icon is yellow/gold | Service is running but can't reach the backend — check `ApiBaseUrl`, network/DNS, and that the backend container is up |
-| `configured: false` in status JSON | Pairing never completed or the DPAPI config is unreadable (e.g. moved to a different machine, or the service is somehow not running as the account that encrypted it) — re-run `install-agent.ps1` with a fresh API key |
+| `configured: false` in status JSON | Pairing never completed or the DPAPI config is unreadable (e.g. moved to a different machine, or the service is somehow not running as the account that encrypted it) — re-run `ResaPrint.Installer.exe` with a fresh API key |
 | Print jobs stay `queued` in the admin UI | Agent isn't polling — check status endpoint's `lastPollAt`; confirm the station's API key hasn't been revoked (re-pairing generates a new one) |
-| Printer not found / `WritePrinter failed` | Run `ResaPrint.Agent.exe --test-print --printer-name "..."` to isolate the problem, then fix the printer name with `installer\update-local-config.ps1 -PrinterName "..."` |
-| Need to change printer/poll interval only | `installer\update-local-config.ps1 -PrinterName "..."` or `-PollIntervalSeconds N` — no re-pairing needed |
-| Need to re-pair (new backend URL, station, or API key) | Re-run `install.ps1` — it's safe to run again and replaces the existing config |
+| Printer not found / `WritePrinter failed` | Run `& "$env:ProgramFiles\ResaPrint\Agent\ResaPrint.Agent.exe" --test-print --printer-name "..."` to isolate the problem, then fix the printer name with `installer\update-local-config.ps1 -PrinterName "..."` (or re-run the installer) |
+| Need to change printer/poll interval/print mode only | `installer\update-local-config.ps1 -PrinterName "..."`, `-PrintMode gdi_text`, or `-PollIntervalSeconds N` — no re-pairing needed |
+| Need to re-pair (new backend URL, station, or API key) | Re-run `ResaPrint.Installer.exe` — it's safe to run again and replaces the existing config |
 
 Service recovery is configured via `sc.exe failure` during install:
 restart after 5s, 30s, then 60s on repeated failures, so transient
@@ -230,6 +208,14 @@ dotnet build ResaPrint.sln -c Release
 dotnet test ResaPrint.Agent.Tests\ResaPrint.Agent.Tests.csproj
 ```
 
-To produce a release-equivalent self-contained single-file build, tag
-a commit `client-vX.Y.Z` and push the tag — `client-release.yml` does
-the rest and attaches the zip to a new GitHub Release.
+A plain local build like that produces a `ResaPrint.Installer.exe` with
+nothing embedded (the `Payload\` folder is empty) — fine for compiling
+and testing, but not something you'd actually install with. To produce
+a real installer with `ResaPrint.Agent.exe`/`ResaPrint.Tray.exe`
+bundled inside it (release-equivalent), either tag a commit
+`client-vX.Y.Z` and push the tag — `client-release.yml` does the full
+publish-stage-embed sequence and attaches the resulting
+`ResaPrint.Installer.exe` to a new GitHub Release — or replicate those
+steps locally: `dotnet publish` Agent and Tray, copy both exes into
+`ResaPrint.Installer\Payload\`, then `dotnet publish` the Installer
+project.

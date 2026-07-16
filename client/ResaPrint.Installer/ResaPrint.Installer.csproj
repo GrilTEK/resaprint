@@ -21,4 +21,21 @@
     <ProjectReference Include="..\ResaPrint.Shared\ResaPrint.Shared.csproj" />
   </ItemGroup>
 
+  <!--
+    ResaPrint.Agent.exe and ResaPrint.Tray.exe get embedded directly
+    into this installer's assembly, so the release ships exactly one
+    file (see .github/workflows/client-release.yml, which publishes
+    those two projects first and stages their output here as
+    Payload\*.exe before publishing this project). The wildcard means
+    a plain local `dotnet build`/`dotnet publish` without that staging
+    step (e.g. client-ci) still succeeds — it just produces an
+    installer with nothing to extract, which is fine since nothing
+    exercises that path in CI.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="Payload\*.exe">
+      <LogicalName>ResaPrint.Installer.Payload.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
 </Project>

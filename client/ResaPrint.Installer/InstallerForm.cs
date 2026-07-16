@@ -1,19 +1,23 @@
 using System.Diagnostics;
 using System.Drawing.Printing;
 using System.Net.Http.Json;
+using System.Reflection;
 using System.Text.Json;
 using ResaPrint.Shared.Escpos;
 
 namespace ResaPrint.Installer;
 
 /// <summary>
-/// Graphical alternative to install.ps1: pick a printer from a list
-/// (instead of typing the exact Windows queue name), send a test print
-/// before installing anything, and either auto-pair a new station via
-/// an admin PIN or use a station ID/API key already paired manually.
-/// Actually installing the service/scheduled task shells out to the
-/// same sc.exe/schtasks.exe/--configure commands install-agent.ps1 and
-/// install-tray-task.ps1 use, so both installers stay in lockstep.
+/// The single distributed artifact for the Windows client — everything
+/// it installs (ResaPrint.Agent.exe, ResaPrint.Tray.exe) is embedded
+/// inside this exe's own assembly as manifest resources (see
+/// ResaPrint.Installer.csproj and client-release.yml) and extracted to
+/// disk at install time, so there is nothing else to download or keep
+/// alongside it. Picks a printer from a list (instead of typing the
+/// exact Windows queue name), sends a test print before installing
+/// anything, and either auto-pairs a new station via an admin PIN or
+/// uses a station ID/API key already paired manually. Also handles
+/// uninstalling — this exe is the full lifecycle, install and remove.
 /// </summary>
 public sealed class InstallerForm : Form
 {
@@ -28,6 +32,7 @@ public sealed class InstallerForm : Form
     private readonly ComboBox _printModeCombo;
     private readonly Button _testPrintButton;
     private readonly Button _installButton;
+    private readonly Button _uninstallButton;
     private readonly TextBox _logBox;
     private readonly Label _statusLabel;
     private readonly ProgressBar _progressBar;
@@ -159,14 +164,18 @@ public sealed class InstallerForm : Form
         _progressBar = new ProgressBar { Dock = DockStyle.Top, Style = ProgressBarStyle.Marquee, MarqueeAnimationSpeed = 0, Height = 12 };
         root.Controls.Add(_progressBar, 0, 6);
 
-        var bottomPanel = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, Height = 40 };
+        var bottomPanel = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 3, Height = 40 };
         bottomPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        bottomPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         bottomPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         _statusLabel = new Label { Text = "Ready.", Anchor = AnchorStyles.Left | AnchorStyles.Bottom, AutoSize = true };
         bottomPanel.Controls.Add(_statusLabel, 0, 0);
+        _uninstallButton = new Button { Text = "Uninstall", Width = 100, Height = 32, Anchor = AnchorStyles.Right };
+        _uninstallButton.Click += OnUninstallClick;
+        bottomPanel.Controls.Add(_uninstallButton, 1, 0);
         _installButton = new Button { Text = "Install", Width = 120, Height = 32, Anchor = AnchorStyles.Right };
         _installButton.Click += OnInstallClick;
-        bottomPanel.Controls.Add(_installButton, 1, 0);
+        bottomPanel.Controls.Add(_installButton, 2, 0);
         root.Controls.Add(bottomPanel, 0, 7);
 
         UpdatePairingFieldsEnabled();
@@ -196,6 +205,7 @@ public sealed class InstallerForm : Form
     {
         _progressBar.MarqueeAnimationSpeed = busy ? 30 : 0;
         _installButton.Enabled = !busy;
+        _uninstallButton.Enabled = !busy;
         _testPrintButton.Enabled = !busy;
         _statusLabel.Text = status;
     }
@@ -341,19 +351,95 @@ public sealed class InstallerForm : Form
         }
     }
 
-    private async Task InstallServiceAndTrayAsync(string apiBaseUrl, int stationId, string apiKey, string printerName, string printMode)
+    private async void OnUninstallClick(object? sender, EventArgs e)
     {
-        var sourceDir = Path.GetDirectoryName(Application.ExecutablePath)!;
-        var sourceAgentExe = Path.Combine(sourceDir, "ResaPrint.Agent.exe");
-        var sourceTrayExe = Path.Combine(sourceDir, "ResaPrint.Tray.exe");
-
-        if (!File.Exists(sourceAgentExe) || !File.Exists(sourceTrayExe))
+        var confirm = MessageBox.Show(
+            this,
+            "This stops and removes the ResaPrintAgent service, the Tray auto-start task, and the installed files under Program Files.\n\n" +
+            "It does NOT remove or deactivate the station on the backend — its API key stays valid there. " +
+            "Delete or deactivate the station from the admin UI's Stations page separately if you want that too.\n\n" +
+            "Continue?",
+            "Uninstall ResaPrint", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+        if (confirm != DialogResult.Yes)
         {
-            throw new FileNotFoundException(
-                "ResaPrint.Agent.exe and ResaPrint.Tray.exe must be in the same folder as ResaPrint.Installer.exe " +
-                "(they ship together in the release zip) — run this installer from the extracted folder.");
+            return;
         }
 
+        SetBusy(true, "Uninstalling...");
+        try
+        {
+            AppendLog("Stopping ResaPrintAgent service...");
+            await RunProcessAsync("sc.exe", "stop ResaPrintAgent");
+
+            AppendLog("Removing ResaPrintAgent service...");
+            await RunProcessAsync("sc.exe", "delete ResaPrintAgent");
+
+            AppendLog("Removing Tray auto-start task...");
+            await RunProcessAsync("schtasks.exe", "/delete /tn \"ResaPrint Tray\" /f");
+
+            AppendLog("Closing any running Tray process...");
+            foreach (var proc in Process.GetProcessesByName("ResaPrint.Tray"))
+            {
+                try { proc.Kill(); } catch { /* best effort */ }
+            }
+
+            var resaprintDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "ResaPrint");
+            if (Directory.Exists(resaprintDir))
+            {
+                AppendLog($"Removing {resaprintDir} ...");
+                try
+                {
+                    Directory.Delete(resaprintDir, recursive: true);
+                }
+                catch (IOException ex)
+                {
+                    AppendLog($"Warning: could not remove {resaprintDir} fully ({ex.Message}) — a file may still be in use. Delete it manually after a reboot if needed.");
+                }
+            }
+
+            var purgeConfig = MessageBox.Show(
+                this,
+                "Also delete the encrypted local config under ProgramData\\ResaPrint? " +
+                "Leave it if you plan to reinstall on this machine with the same pairing.",
+                "Uninstall ResaPrint", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (purgeConfig == DialogResult.Yes)
+            {
+                var configDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "ResaPrint");
+                if (Directory.Exists(configDir))
+                {
+                    AppendLog($"Removing {configDir} ...");
+                    Directory.Delete(configDir, recursive: true);
+                }
+            }
+
+            AppendLog("");
+            AppendLog("Uninstall complete.");
+            MessageBox.Show(this, "ResaPrint client uninstalled.", "ResaPrint Setup", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"UNINSTALL FAILED: {ex.Message}");
+            MessageBox.Show(this, $"Uninstall failed:\n{ex.Message}\n\nSee the log for details.", "ResaPrint Setup", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            SetBusy(false, "Ready.");
+        }
+    }
+
+    private static void ExtractEmbeddedExe(string logicalFileName, string destinationPath)
+    {
+        var resourceName = $"ResaPrint.Installer.Payload.{logicalFileName}";
+        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName)
+            ?? throw new InvalidOperationException(
+                $"This installer build is missing its bundled '{logicalFileName}' payload " +
+                "(embedded resource not found) — it was built without the release workflow's staging step.");
+        using var fileStream = File.Create(destinationPath);
+        stream.CopyTo(fileStream);
+    }
+
+    private async Task InstallServiceAndTrayAsync(string apiBaseUrl, int stationId, string apiKey, string printerName, string printMode)
+    {
         var installDirAgent = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "ResaPrint", "Agent");
         var installDirTray = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "ResaPrint", "Tray");
         Directory.CreateDirectory(installDirAgent);
@@ -370,10 +456,10 @@ public sealed class InstallerForm : Form
 
         var destAgentExe = Path.Combine(installDirAgent, "ResaPrint.Agent.exe");
         var destTrayExe = Path.Combine(installDirTray, "ResaPrint.Tray.exe");
-        AppendLog($"Copying Agent to {destAgentExe} ...");
-        File.Copy(sourceAgentExe, destAgentExe, overwrite: true);
-        AppendLog($"Copying Tray to {destTrayExe} ...");
-        File.Copy(sourceTrayExe, destTrayExe, overwrite: true);
+        AppendLog($"Extracting bundled Agent to {destAgentExe} ...");
+        ExtractEmbeddedExe("ResaPrint.Agent.exe", destAgentExe);
+        AppendLog($"Extracting bundled Tray to {destTrayExe} ...");
+        ExtractEmbeddedExe("ResaPrint.Tray.exe", destTrayExe);
 
         AppendLog("Writing configuration (pairing) ...");
         var configureArgs = $"--configure --api-base-url \"{apiBaseUrl}\" --station-id {stationId} --api-key \"{apiKey}\" --printer-name \"{printerName}\" --print-mode {printMode}";
@@ -423,7 +509,7 @@ public sealed class InstallerForm : Form
         AppendLog(taskOutput.Trim());
         if (taskExit != 0)
         {
-            AppendLog("Warning: could not register the Tray scheduled task — you can start it manually or run installer\\install-tray-task.ps1.");
+            AppendLog($"Warning: could not register the Tray scheduled task — you can start it manually from {destTrayExe}.");
         }
     }
 

@@ -18,6 +18,7 @@ obj/
 *.user
 publish/
 out/
+client/ResaPrint.Installer/Payload/*.exe
 
 # IDE
 .vs/

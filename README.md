@@ -45,7 +45,7 @@ flowchart LR
   bash -c "$(curl -fsSL https://raw.githubusercontent.com/GrilTEK/resaprint/main/proxmox/install-resaprint-lxc.sh)"
   ```
   Creates a new LXC, installs Docker, and starts the stack. See [`proxmox/install-resaprint-lxc.sh`](proxmox/install-resaprint-lxc.sh) for override variables and [`docs/BACKEND.md`](docs/BACKEND.md) for manual `docker compose` deploy, env vars, IMAP setup, and the parser field-mapping guide.
-- **Windows client install**: see [`docs/CLIENT.md`](docs/CLIENT.md) — download the release zip, run `install.ps1` as admin, pair the station.
+- **Windows client install**: see [`docs/CLIENT.md`](docs/CLIENT.md) — download `ResaPrint.Installer.exe` (the only file needed), run it as admin, pair the station.
 - **API reference**: see [`docs/API.md`](docs/API.md).
 
 ## Repository layout

@@ -57,7 +57,19 @@ jobs:
           -p:IncludeNativeLibrariesForSelfExtract=true
           -o out\tray
 
-      - name: Publish ResaPrint.Installer (self-contained, single-file)
+      - name: Stage Agent + Tray as the Installer's embedded payload
+        # ResaPrint.Installer.csproj embeds everything under
+        # Payload\*.exe as manifest resources at build time — staging
+        # the two exes here *before* publishing the installer is what
+        # makes the final ResaPrint.Installer.exe self-contained enough
+        # to be the only file end users ever need to download.
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "ResaPrint.Installer\Payload" | Out-Null
+          Copy-Item "out\agent\ResaPrint.Agent.exe" -Destination "ResaPrint.Installer\Payload" -Force
+          Copy-Item "out\tray\ResaPrint.Tray.exe" -Destination "ResaPrint.Installer\Payload" -Force
+
+      - name: Publish ResaPrint.Installer (self-contained, single-file, with embedded Agent/Tray payload)
         # Also Windows Forms — no PublishTrimmed, same reasoning as Tray.
         run: >
           dotnet publish ResaPrint.Installer\ResaPrint.Installer.csproj
@@ -66,25 +78,13 @@ jobs:
           -p:IncludeNativeLibrariesForSelfExtract=true
           -o out\installer-gui
 
-      - name: Stage release contents
+      - name: Rename release asset
         shell: pwsh
         run: |
-          $stage = "out\release"
-          New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          Copy-Item "out\agent\ResaPrint.Agent.exe" -Destination $stage
-          Copy-Item "out\tray\ResaPrint.Tray.exe" -Destination $stage
-          Copy-Item "out\installer-gui\ResaPrint.Installer.exe" -Destination $stage
-          Copy-Item "installer" -Destination "$stage\installer" -Recurse
-          Copy-Item "install.ps1" -Destination $stage
-          Copy-Item "uninstall.ps1" -Destination $stage
-          Copy-Item "..\docs\CLIENT.md" -Destination $stage
-
-      - name: Zip release
-        shell: pwsh
-        run: Compress-Archive -Path "out\release\*" -DestinationPath "out\ResaPrint-Client-${{ github.ref_name }}.zip"
+          Copy-Item "out\installer-gui\ResaPrint.Installer.exe" -Destination "out\ResaPrint-Client-${{ github.ref_name }}.exe"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: client/out/ResaPrint-Client-${{ github.ref_name }}.zip
+          files: client/out/ResaPrint-Client-${{ github.ref_name }}.exe
           generate_release_notes: true
