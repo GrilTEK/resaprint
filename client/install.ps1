@@ -31,7 +31,8 @@ param(
     [int]$StationId,
     [string]$ApiKey,
 
-    [string]$PrinterName
+    [string]$PrinterName,
+    [ValidateSet("escpos", "gdi_text")][string]$PrintMode = "escpos"
 )
 
 $ErrorActionPreference = "Stop"
@@ -66,7 +67,7 @@ if (-not $PrinterName) {
 if (Test-Path $agentExe) {
     $doTest = Read-Host "Send a test print to '$PrinterName' now to confirm it's wired up correctly? (y/n)"
     if ($doTest -eq "y") {
-        & $agentExe --test-print --printer-name $PrinterName
+        & $agentExe --test-print --printer-name $PrinterName --print-mode $PrintMode
         if ($LASTEXITCODE -ne 0) {
             $proceed = Read-Host "Test print failed — continue with install anyway? (y/n)"
             if ($proceed -ne "y") {
@@ -110,7 +111,7 @@ if (-not $StationId -or -not $ApiKey) {
 }
 
 # ---------- 4. Install the Agent service + Tray app ----------
-& (Join-Path $here "installer\install-agent.ps1") -ApiBaseUrl $ApiBaseUrl -StationId $StationId -ApiKey $ApiKey -PrinterName $PrinterName -SourcePath $here
+& (Join-Path $here "installer\install-agent.ps1") -ApiBaseUrl $ApiBaseUrl -StationId $StationId -ApiKey $ApiKey -PrinterName $PrinterName -PrintMode $PrintMode -SourcePath $here
 & (Join-Path $here "installer\install-tray-task.ps1") -SourcePath $here
 
 Write-Host ""

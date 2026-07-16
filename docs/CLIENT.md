@@ -45,16 +45,39 @@ flowing**, because:
 
 - Windows 10/11 or Windows Server, x64.
 - The USB receipt printer installed as a Windows printer (Control
-  Panel → Devices and Printers → Add printer). Use a generic driver —
-  "Generic / Text Only" works well, or the printer manufacturer's
-  driver if it exposes a plain queue name — since the Agent sends raw
-  ESC/POS bytes and does not rely on driver-side rendering. You do
-  **not** need to know the exact queue name up front — the installer
-  shows a picker (see below).
+  Panel → Devices and Printers → Add printer). Which driver to use
+  depends on the print mode you pick (see below):
+  - **escpos** (default): a generic driver — "Generic / Text Only"
+    works well, or the printer manufacturer's driver if it exposes a
+    plain queue name — since the Agent sends raw ESC/POS bytes and
+    does not rely on driver-side rendering.
+  - **gdi_text**: the printer's real Windows driver, since this mode
+    prints through the normal Windows GDI printing pipeline instead of
+    raw ESC/POS commands.
+
+  You do **not** need to know the exact queue name up front — the
+  installer shows a picker (see below).
 - An admin PIN for the ResaPrint backend (simplest path — the
   installer pairs the station for you), or a station already created
   and paired manually via the admin UI's Stations page if you prefer
   that route.
+
+## Print modes
+
+The Agent supports two ways of turning a receipt's text into printer
+output — pick whichever matches how the printer is installed:
+
+| Mode | How it prints | Font/size | Printer driver needed |
+|---|---|---|---|
+| `escpos` (default) | Raw ESC/POS bytes sent via `winspool.drv`'s RAW datatype, bypassing the driver entirely | Compact — whatever the printer's own Font A/B + the backend's `receipt_font_size` setting (Normal/Large/Extra large) produce | "Generic / Text Only" or similar |
+| `gdi_text` | Rendered through `System.Drawing.Printing` (the normal Windows GDI print pipeline) | Large bold text (Arial/Segoe UI-family, ~40px cell height, generous line spacing) — matches the font/size the operator's previous standalone Python script printed with | The printer's real Windows driver |
+
+Set it with `-PrintMode gdi_text` on `install.ps1`/`install-agent.ps1`,
+the **Print mode** dropdown in the GUI installer, or afterward without
+reinstalling: `installer\update-local-config.ps1 -PrintMode gdi_text`.
+Always send a **Test Print** after switching to confirm the physical
+output looks right — `gdi_text` output depends entirely on the printer
+driver actually being GDI-capable, not a RAW-passthrough queue.
 
 ## Install (GUI — recommended)
 
@@ -71,6 +94,9 @@ and a USB-connected receipt printer plugged into this PC.
    - Enter the **backend URL** (e.g. `http://192.168.1.50:8000`).
    - Pick the **printer** from the dropdown (populated from Windows'
      installed printers — no need to know the exact queue name).
+   - Pick the **print mode** — ESC/POS (default, compact) or GDI text
+     (larger font, matches the old script's output — see "Print modes"
+     above).
    - Click **Test Print** to confirm the printer is wired up correctly
      before installing anything.
    - Either enter the **admin PIN** (the installer creates and pairs a
@@ -142,12 +168,13 @@ untouched):
 ```powershell
 installer\update-local-config.ps1                              # shows current config
 installer\update-local-config.ps1 -PrinterName "POS-80 Series"
+installer\update-local-config.ps1 -PrintMode gdi_text
 installer\update-local-config.ps1 -PollIntervalSeconds 10
 ```
 
 This calls the Agent's own `--show-config`/`--set-printer-name`/
-`--set-poll-interval` and restarts the service. You can also run these
-directly:
+`--set-print-mode`/`--set-poll-interval` and restarts the service. You
+can also run these directly:
 
 ```powershell
 & "$env:ProgramFiles\ResaPrint\Agent\ResaPrint.Agent.exe" --show-config

@@ -25,6 +25,7 @@ public sealed class InstallerForm : Form
     private readonly TextBox _stationIdBox;
     private readonly TextBox _apiKeyBox;
     private readonly ComboBox _printerCombo;
+    private readonly ComboBox _printModeCombo;
     private readonly Button _testPrintButton;
     private readonly Button _installButton;
     private readonly TextBox _logBox;
@@ -105,8 +106,8 @@ public sealed class InstallerForm : Form
         _manualPairRadio.CheckedChanged += (_, _) => UpdatePairingFieldsEnabled();
 
         // ---- Printer ----
-        var printerGroup = new GroupBox { Text = "Receipt printer", Dock = DockStyle.Top, Height = 70 };
-        var printerPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, Padding = new Padding(8) };
+        var printerGroup = new GroupBox { Text = "Receipt printer", Dock = DockStyle.Top, Height = 100 };
+        var printerPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 2, Padding = new Padding(8) };
         printerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         printerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         printerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -124,6 +125,15 @@ public sealed class InstallerForm : Form
         _testPrintButton = new Button { Text = "Test Print", AutoSize = true };
         _testPrintButton.Click += OnTestPrintClick;
         printerPanel.Controls.Add(_testPrintButton, 2, 0);
+
+        printerPanel.Controls.Add(new Label { Text = "Print mode:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
+        _printModeCombo = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
+        _printModeCombo.Items.Add("ESC/POS (compact, needs Generic / Text Only printer)");
+        _printModeCombo.Items.Add("GDI text (larger font, needs the printer's real driver)");
+        _printModeCombo.SelectedIndex = 0;
+        printerPanel.Controls.Add(_printModeCombo, 1, 1);
+        printerPanel.SetColumnSpan(_printModeCombo, 2);
+
         printerGroup.Controls.Add(printerPanel);
         root.Controls.Add(printerGroup, 0, 2);
 
@@ -180,6 +190,8 @@ public sealed class InstallerForm : Form
         _logBox.AppendText(line + Environment.NewLine);
     }
 
+    private string SelectedPrintMode => _printModeCombo.SelectedIndex == 1 ? "gdi_text" : "escpos";
+
     private void SetBusy(bool busy, string status)
     {
         _progressBar.MarqueeAnimationSpeed = busy ? 30 : 0;
@@ -199,20 +211,36 @@ public sealed class InstallerForm : Form
         SetBusy(true, "Sending test print...");
         try
         {
-            var receipt = new ReceiptBuilder()
-                .AlignCenter()
-                .BoldLine("ResaPrint")
-                .AlignLeft()
-                .Line("Test print")
-                .Line($"Printer: {printerName}")
-                .Line($"Time: {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss}")
-                .Divider()
-                .Feed(3)
-                .Cut()
-                .Build();
+            ResaPrint.Shared.PrintResult result;
+            if (SelectedPrintMode == "gdi_text")
+            {
+                var text = string.Join('\n', new[]
+                {
+                    "ResaPrint",
+                    "Test print",
+                    $"Printer: {printerName}",
+                    $"Time: {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss}",
+                });
+                var gdiPrinter = new ResaPrint.Shared.GdiTextPrinter(printerName);
+                result = await gdiPrinter.PrintAsync(System.Text.Encoding.UTF8.GetBytes(text));
+            }
+            else
+            {
+                var receipt = new ReceiptBuilder()
+                    .AlignCenter()
+                    .BoldLine("ResaPrint")
+                    .AlignLeft()
+                    .Line("Test print")
+                    .Line($"Printer: {printerName}")
+                    .Line($"Time: {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss}")
+                    .Divider()
+                    .Feed(3)
+                    .Cut()
+                    .Build();
 
-            var printer = new ResaPrint.Shared.WinspoolPosPrinter(printerName);
-            var result = await printer.PrintAsync(receipt);
+                var printer = new ResaPrint.Shared.WinspoolPosPrinter(printerName);
+                result = await printer.PrintAsync(receipt);
+            }
 
             if (result.Success)
             {
@@ -296,7 +324,7 @@ public sealed class InstallerForm : Form
                 apiKey = _apiKeyBox.Text.Trim();
             }
 
-            await InstallServiceAndTrayAsync(apiBaseUrl, stationId, apiKey, printerName);
+            await InstallServiceAndTrayAsync(apiBaseUrl, stationId, apiKey, printerName, SelectedPrintMode);
 
             AppendLog("");
             AppendLog("Done. Status endpoint: http://127.0.0.1:5990/status");
@@ -313,7 +341,7 @@ public sealed class InstallerForm : Form
         }
     }
 
-    private async Task InstallServiceAndTrayAsync(string apiBaseUrl, int stationId, string apiKey, string printerName)
+    private async Task InstallServiceAndTrayAsync(string apiBaseUrl, int stationId, string apiKey, string printerName, string printMode)
     {
         var sourceDir = Path.GetDirectoryName(Application.ExecutablePath)!;
         var sourceAgentExe = Path.Combine(sourceDir, "ResaPrint.Agent.exe");
@@ -348,7 +376,7 @@ public sealed class InstallerForm : Form
         File.Copy(sourceTrayExe, destTrayExe, overwrite: true);
 
         AppendLog("Writing configuration (pairing) ...");
-        var configureArgs = $"--configure --api-base-url \"{apiBaseUrl}\" --station-id {stationId} --api-key \"{apiKey}\" --printer-name \"{printerName}\"";
+        var configureArgs = $"--configure --api-base-url \"{apiBaseUrl}\" --station-id {stationId} --api-key \"{apiKey}\" --printer-name \"{printerName}\" --print-mode {printMode}";
         var (configExit, configOutput) = await RunProcessAsync(destAgentExe, configureArgs);
         AppendLog(configOutput.Trim());
         if (configExit != 0)

@@ -21,6 +21,8 @@ if (args.Length > 0)
             return RunSetPrinterName(args);
         case "--set-poll-interval":
             return RunSetPollInterval(args);
+        case "--set-print-mode":
+            return RunSetPrintMode(args);
     }
 }
 
@@ -44,7 +46,9 @@ else
     builder.Services.AddHttpClient();
     builder.Services.AddSingleton<IResaPrintApiClient>(sp =>
         new ResaPrintApiClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient(), config.ApiBaseUrl, config.ApiKey));
-    builder.Services.AddSingleton<IPosPrinter>(_ => new WinspoolPosPrinter(config.PrinterName));
+    builder.Services.AddSingleton<IPosPrinter>(_ => config.PrintMode == "gdi_text"
+        ? new GdiTextPrinter(config.PrinterName)
+        : new WinspoolPosPrinter(config.PrinterName));
     builder.Services.AddHostedService<Worker>();
     builder.Services.AddHostedService<StatusEndpoint>();
 }
@@ -56,6 +60,7 @@ return 0;
 static int RunConfigure(string[] args)
 {
     string? apiBaseUrl = null, apiKey = null, printerName = null;
+    string printMode = "escpos";
     int stationId = 0;
     int pollIntervalSeconds = 5;
 
@@ -68,13 +73,21 @@ static int RunConfigure(string[] args)
             case "--api-key": apiKey = args[i + 1]; break;
             case "--printer-name": printerName = args[i + 1]; break;
             case "--poll-interval": pollIntervalSeconds = int.Parse(args[i + 1]); break;
+            case "--print-mode": printMode = args[i + 1]; break;
         }
     }
 
     if (string.IsNullOrWhiteSpace(apiBaseUrl) || string.IsNullOrWhiteSpace(apiKey) || stationId == 0)
     {
         Console.Error.WriteLine(
-            "Usage: ResaPrint.Agent.exe --configure --api-base-url <url> --station-id <id> --api-key <key> [--printer-name <name>] [--poll-interval <seconds>]");
+            "Usage: ResaPrint.Agent.exe --configure --api-base-url <url> --station-id <id> --api-key <key> " +
+            "[--printer-name <name>] [--poll-interval <seconds>] [--print-mode escpos|gdi_text]");
+        return 1;
+    }
+
+    if (printMode is not ("escpos" or "gdi_text"))
+    {
+        Console.Error.WriteLine("--print-mode must be 'escpos' or 'gdi_text'");
         return 1;
     }
 
@@ -85,6 +98,7 @@ static int RunConfigure(string[] args)
         ApiKey = apiKey,
         PrinterName = printerName ?? string.Empty,
         PollIntervalSeconds = pollIntervalSeconds,
+        PrintMode = printMode,
     };
 
     DpapiConfigStore.Save(config);
@@ -96,40 +110,62 @@ static int RunTestPrint(string[] args)
 {
     // Standalone printer check — does not need the service to be
     // configured or the backend to be reachable at all. Useful during
-    // install to confirm the Windows printer queue name/setup works
-    // before wiring up pairing.
+    // install to confirm the Windows printer queue name/setup (and,
+    // with --print-mode gdi_text, the font/size) works before wiring
+    // up pairing.
     string? printerName = null;
+    string? printMode = null;
     for (var i = 1; i < args.Length - 1; i++)
     {
-        if (args[i] == "--printer-name")
+        switch (args[i])
         {
-            printerName = args[i + 1];
+            case "--printer-name": printerName = args[i + 1]; break;
+            case "--print-mode": printMode = args[i + 1]; break;
         }
     }
 
-    printerName ??= DpapiConfigStore.TryLoad()?.PrinterName;
+    var existing = DpapiConfigStore.TryLoad();
+    printerName ??= existing?.PrinterName;
+    printMode ??= existing?.PrintMode ?? "escpos";
+
     if (string.IsNullOrWhiteSpace(printerName))
     {
-        Console.Error.WriteLine("Usage: ResaPrint.Agent.exe --test-print --printer-name <Windows printer queue name>");
-        Console.Error.WriteLine("(or configure the agent first so --printer-name can be omitted)");
+        Console.Error.WriteLine("Usage: ResaPrint.Agent.exe --test-print --printer-name <Windows printer queue name> [--print-mode escpos|gdi_text]");
+        Console.Error.WriteLine("(or configure the agent first so --printer-name/--print-mode can be omitted)");
         return 1;
     }
 
-    var receipt = new ReceiptBuilder()
-        .AlignCenter()
-        .BoldLine("ResaPrint")
-        .AlignLeft()
-        .Line("Test print")
-        .Line($"Printer: {printerName}")
-        .Line($"Time: {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss}")
-        .Divider()
-        .Feed(3)
-        .Cut()
-        .Build();
+    Console.WriteLine($"Sending test receipt to '{printerName}' (print mode: {printMode})...");
+    PrintResult result;
 
-    Console.WriteLine($"Sending test receipt to '{printerName}'...");
-    var printer = new WinspoolPosPrinter(printerName);
-    var result = printer.PrintAsync(receipt).GetAwaiter().GetResult();
+    if (printMode == "gdi_text")
+    {
+        var text = string.Join('\n', new[]
+        {
+            "ResaPrint",
+            "Test print",
+            $"Printer: {printerName}",
+            $"Time: {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss}",
+        });
+        var printer = new GdiTextPrinter(printerName);
+        result = printer.PrintAsync(System.Text.Encoding.UTF8.GetBytes(text)).GetAwaiter().GetResult();
+    }
+    else
+    {
+        var receipt = new ReceiptBuilder()
+            .AlignCenter()
+            .BoldLine("ResaPrint")
+            .AlignLeft()
+            .Line("Test print")
+            .Line($"Printer: {printerName}")
+            .Line($"Time: {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss}")
+            .Divider()
+            .Feed(3)
+            .Cut()
+            .Build();
+        var printer = new WinspoolPosPrinter(printerName);
+        result = printer.PrintAsync(receipt).GetAwaiter().GetResult();
+    }
 
     if (result.Success)
     {
@@ -156,6 +192,7 @@ static int RunShowConfig()
     Console.WriteLine($"Station ID:       {config.StationId}");
     Console.WriteLine($"API key:          {maskedKey}");
     Console.WriteLine($"Printer name:     {config.PrinterName}");
+    Console.WriteLine($"Print mode:       {config.PrintMode}");
     Console.WriteLine($"Poll interval:    {config.PollIntervalSeconds}s");
     return 0;
 }
@@ -200,6 +237,28 @@ static int RunSetPollInterval(string[] args)
     config.PollIntervalSeconds = seconds;
     DpapiConfigStore.Save(config);
     Console.WriteLine($"Poll interval updated to {seconds}s. Restart the service for it to take effect:");
+    Console.WriteLine("  Restart-Service ResaPrintAgent");
+    return 0;
+}
+
+static int RunSetPrintMode(string[] args)
+{
+    if (args.Length < 2 || args[1] is not ("escpos" or "gdi_text"))
+    {
+        Console.Error.WriteLine("Usage: ResaPrint.Agent.exe --set-print-mode <escpos|gdi_text>");
+        return 1;
+    }
+
+    var config = DpapiConfigStore.TryLoad();
+    if (config is null)
+    {
+        Console.Error.WriteLine("Not configured yet — run --configure first.");
+        return 1;
+    }
+
+    config.PrintMode = args[1];
+    DpapiConfigStore.Save(config);
+    Console.WriteLine($"Print mode updated to '{config.PrintMode}'. Restart the service for it to take effect:");
     Console.WriteLine("  Restart-Service ResaPrintAgent");
     return 0;
 }

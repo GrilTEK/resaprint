@@ -15,9 +15,16 @@
 .PARAMETER ApiKey
     The one-time API key shown by the admin UI's "Pair" action.
 .PARAMETER PrinterName
-    The Windows printer queue name the Agent should send raw ESC/POS
-    bytes to (install the USB receipt printer as a generic/text or
-    "Generic / Text Only" printer first — see docs/CLIENT.md).
+    The Windows printer queue name the Agent should print to. With the
+    default -PrintMode escpos, install the USB receipt printer as a
+    generic/text or "Generic / Text Only" printer first (see
+    docs/CLIENT.md); with -PrintMode gdi_text, install it with its real
+    Windows driver instead.
+.PARAMETER PrintMode
+    "escpos" (default): render receipts as compact ESC/POS bytes sent
+    RAW to the printer queue. "gdi_text": print through the Windows GDI
+    printing pipeline instead, using a large bold font — matches the
+    font/size the operator's previous standalone script printed with.
 .PARAMETER SourcePath
     Directory containing the published ResaPrint.Agent.exe. Defaults to
     the script's own directory (i.e. run this from the extracted
@@ -28,6 +35,7 @@ param(
     [Parameter(Mandatory = $true)][int]$StationId,
     [Parameter(Mandatory = $true)][string]$ApiKey,
     [Parameter(Mandatory = $true)][string]$PrinterName,
+    [ValidateSet("escpos", "gdi_text")][string]$PrintMode = "escpos",
     [string]$SourcePath = $PSScriptRoot,
     [string]$InstallDir = "$env:ProgramFiles\ResaPrint\Agent"
 )
@@ -54,8 +62,8 @@ Copy-Item -Path $sourceExe -Destination $InstallDir -Force
 
 $installedExe = Join-Path $InstallDir $exeName
 
-Write-Host "Pairing with backend and writing encrypted local config..."
-& $installedExe --configure --api-base-url $ApiBaseUrl --station-id $StationId --api-key $ApiKey --printer-name $PrinterName
+Write-Host "Pairing with backend and writing encrypted local config (print mode: $PrintMode)..."
+& $installedExe --configure --api-base-url $ApiBaseUrl --station-id $StationId --api-key $ApiKey --printer-name $PrinterName --print-mode $PrintMode
 if ($LASTEXITCODE -ne 0) {
     throw "Agent --configure step failed (exit code $LASTEXITCODE)."
 }

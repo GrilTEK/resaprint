@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.Extensions.Logging;
 using ResaPrint.Shared;
 using ResaPrint.Shared.Api;
@@ -8,11 +9,16 @@ namespace ResaPrint.Agent;
 
 /// <summary>
 /// Polls the backend for queued print jobs targeted at this station,
-/// renders each as ESC/POS bytes (from the server's human-readable
-/// payload_text via the local ReceiptBuilder — this avoids needing to
-/// serialize raw bytes over JSON while keeping byte-format parity
-/// with the backend's own builder), sends them to the configured
-/// printer, and acks the result back to the backend.
+/// renders each (from the server's human-readable payload_text — this
+/// avoids needing to serialize raw bytes over JSON) and sends it to
+/// the configured printer, then acks the result back to the backend.
+///
+/// Rendering depends on config.PrintMode: "escpos" (default) renders
+/// compact ESC/POS bytes locally via ReceiptBuilder, keeping byte-
+/// format parity with the backend's own builder; "gdi_text" skips
+/// that entirely and hands the printer the raw UTF-8 text, since
+/// GdiTextPrinter does its own font/layout rendering through the
+/// Windows GDI printing pipeline instead of ESC/POS commands.
 /// </summary>
 public sealed class Worker : BackgroundService
 {
@@ -74,7 +80,9 @@ public sealed class Worker : BackgroundService
 
     public async Task ProcessJobAsync(PrintJobDto job, CancellationToken cancellationToken)
     {
-        var bytes = RenderJob(job);
+        var bytes = _config.PrintMode == "gdi_text"
+            ? Encoding.UTF8.GetBytes(job.PayloadText)
+            : RenderJob(job);
         var result = await _printer.PrintAsync(bytes, cancellationToken);
 
         _status.LastJobAt = DateTimeOffset.UtcNow;

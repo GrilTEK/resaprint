@@ -7,9 +7,12 @@ namespace ResaPrint.Agent.Tests;
 
 public class WorkerTests
 {
-    private static Worker CreateWorker(FakeApiClient api, FakePosPrinter printer, AgentStatus? status = null)
+    private static Worker CreateWorker(FakeApiClient api, FakePosPrinter printer, AgentStatus? status = null, string printMode = "escpos")
     {
-        var config = new StationConfig { ApiBaseUrl = "https://example.test", StationId = 1, ApiKey = "key", PollIntervalSeconds = 1 };
+        var config = new StationConfig
+        {
+            ApiBaseUrl = "https://example.test", StationId = 1, ApiKey = "key", PollIntervalSeconds = 1, PrintMode = printMode,
+        };
         return new Worker(NullLogger<Worker>.Instance, api, printer, config, status ?? new AgentStatus());
     }
 
@@ -110,5 +113,36 @@ public class WorkerTests
 
         Assert.Equal((1, "printed", (string?)null), api.Acks[0]);
         Assert.Equal((2, "failed", "jam"), api.Acks[1]);
+    }
+
+    [Fact]
+    public async Task ProcessJobAsync_EscposMode_SendsEscposRenderedBytes()
+    {
+        var api = new FakeApiClient();
+        var printer = new FakePosPrinter();
+        var worker = CreateWorker(api, printer, printMode: "escpos");
+        var job = new PrintJobDto { Id = 1, StationId = 1, PayloadText = "Guest: Jane" };
+
+        await worker.ProcessJobAsync(job, CancellationToken.None);
+
+        var bytes = printer.Received[0];
+        // GS V 0x01 (partial cut) — only the ESC/POS renderer appends this.
+        Assert.Equal(0x1d, bytes[^3]);
+        Assert.Equal((byte)'V', bytes[^2]);
+        Assert.Equal(0x01, bytes[^1]);
+    }
+
+    [Fact]
+    public async Task ProcessJobAsync_GdiTextMode_SendsRawUtf8PayloadTextUnmodified()
+    {
+        var api = new FakeApiClient();
+        var printer = new FakePosPrinter();
+        var worker = CreateWorker(api, printer, printMode: "gdi_text");
+        var job = new PrintJobDto { Id = 1, StationId = 1, PayloadText = "Guest: Jane\nRoom: 101" };
+
+        await worker.ProcessJobAsync(job, CancellationToken.None);
+
+        var bytes = printer.Received[0];
+        Assert.Equal(job.PayloadText, System.Text.Encoding.UTF8.GetString(bytes));
     }
 }
