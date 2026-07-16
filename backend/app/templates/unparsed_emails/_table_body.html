@@ -1,0 +1,26 @@
+<tbody>
+  {% for e in emails %}
+  <tr>
+    <td>{{ e.created_at }}</td>
+    <td><a href="/unparsed-emails/{{ e.id }}">{{ e.subject or "(no subject)" }}</a></td>
+    <td>{{ e.parser_slug or "-" }}</td>
+    <td>{{ e.reason }}</td>
+    <td>{{ e.status.value }}</td>
+    <td>
+      {% if e.status.value != "resolved" %}
+      <button hx-post="/unparsed-emails/{{ e.id }}/reparse" hx-target="body">Reparse</button>
+      {% endif %}
+      {% if e.status.value == "pending" %}
+      <button
+        hx-post="/unparsed-emails/{{ e.id }}/ignore"
+        hx-target="body"
+        hx-confirm="Ignore this email? It will stay listed for reference but won't count as pending."
+        class="secondary"
+      >Ignore</button>
+      {% endif %}
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6">Nothing here — every ingested email has matched a parser so far.</td></tr>
+  {% endfor %}
+</tbody>

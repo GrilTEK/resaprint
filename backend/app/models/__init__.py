@@ -12,6 +12,7 @@ from app.models.print_station import PrintStation, StationConnectionType
 from app.models.reservation import Reservation, ReservationStatus
 from app.models.reservation_room_line import ReservationRoomLine
 from app.models.room import Room
+from app.models.unparsed_email import UnparsedEmail, UnparsedEmailStatus
 
 __all__ = [
     "AdminPin",
@@ -29,4 +30,6 @@ __all__ = [
     "ReservationRoomLine",
     "ReservationStatus",
     "Room",
+    "UnparsedEmail",
+    "UnparsedEmailStatus",
 ]

@@ -9,6 +9,7 @@ from app.models.audit_log import AuditLog
 from app.models.print_job import PrintJob
 from app.models.print_station import PrintStation, StationConnectionType
 from app.models.reservation import Reservation
+from app.models.unparsed_email import UnparsedEmail, UnparsedEmailStatus
 from app.services import email_ingest
 from app.services.app_settings import get_or_create_settings
 from app.services.email_ingest import FetchedEmail, ImapConnectionInfo, _decode_subject, _extract_body, _process_email
@@ -86,6 +87,13 @@ async def test_process_email_logs_unparsed_when_no_parser_matches(db_session: As
     assert entries[0].actor == "system"
     assert calls == [("seen", b"2")]
 
+    unparsed_result = await db_session.execute(select(UnparsedEmail))
+    unparsed = unparsed_result.scalars().one()
+    assert unparsed.subject == "Unrelated newsletter"
+    assert unparsed.body == "nothing useful here"
+    assert unparsed.status == UnparsedEmailStatus.pending
+    assert unparsed.parser_slug is None
+
 
 @pytest.mark.asyncio
 async def test_process_email_logs_unparsed_when_required_field_missing(db_session: AsyncSession, monkeypatch):
@@ -105,6 +113,11 @@ async def test_process_email_logs_unparsed_when_required_field_missing(db_sessio
     result = await db_session.execute(select(Reservation))
     assert result.scalars().all() == []
     assert calls == [("seen", b"3")]
+
+    unparsed_result = await db_session.execute(select(UnparsedEmail))
+    unparsed = unparsed_result.scalars().one()
+    assert unparsed.parser_slug == "booking_com_reference"
+    assert unparsed.status == UnparsedEmailStatus.pending
 
 
 @pytest.mark.asyncio

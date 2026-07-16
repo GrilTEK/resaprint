@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Unparsed email — ResaPrint{% endblock %}
+{% block content %}
+<p><a href="/unparsed-emails">&larr; Unparsed emails</a></p>
+<h1>{{ email.subject or "(no subject)" }}</h1>
+
+<div class="card">
+  <div class="form-row"><label>Status</label><span>{{ email.status.value }}</span></div>
+  <div class="form-row"><label>Received</label><span>{{ email.created_at }}</span></div>
+  <div class="form-row"><label>Parser</label><span>{{ email.parser_slug or "-" }}</span></div>
+  <div class="form-row"><label>Reason</label><span>{{ email.reason }}</span></div>
+  <div class="form-row"><label>Content type</label><span>{{ email.content_type }}</span></div>
+  {% if email.resolved_reservation_id %}
+  <div class="form-row">
+    <label>Resolved into</label>
+    <a href="/reservations/{{ email.resolved_reservation_id }}">Reservation #{{ email.resolved_reservation_id }}</a>
+  </div>
+  {% endif %}
+
+  <div id="unparsed-email-actions">
+    {% if email.status.value != "resolved" %}
+    <button hx-post="/unparsed-emails/{{ email.id }}/reparse" hx-target="body">Reparse</button>
+    {% endif %}
+    {% if email.status.value == "pending" %}
+    <button
+      hx-post="/unparsed-emails/{{ email.id }}/ignore"
+      hx-target="body"
+      hx-confirm="Ignore this email? It will stay listed for reference but won't count as pending."
+      class="secondary"
+    >Ignore</button>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <h2>Raw body</h2>
+  <pre style="white-space: pre-wrap; word-break: break-word;">{{ email.body }}</pre>
+</div>
+{% endblock %}

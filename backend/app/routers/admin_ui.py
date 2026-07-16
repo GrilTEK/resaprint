@@ -22,13 +22,14 @@ from app.models.print_station import PrintStation, StationConnectionType
 from app.models.reservation import Reservation, ReservationStatus
 from app.models.reservation_room_line import ReservationRoomLine
 from app.models.room import Room
+from app.models.unparsed_email import UnparsedEmail, UnparsedEmailStatus
 from app.schemas.config import config_out_from_row
 from app.schemas.parser import PARSED_RESERVATION_FIELDS
-from app.services import audit, printing
+from app.services import audit, email_ingest, printing
 from app.services.app_settings import get_or_create_settings
 from app.services.auth_service import hash_pin
 from app.services.crypto import encrypt
-from app.services.parser_registry import GenericFieldMappingParser
+from app.services.parser_registry import GenericFieldMappingParser, ParserError
 from app.services.room_assignment import reassign_rooms_for_reservation, rooms_occupied_on_date
 
 router = APIRouter(tags=["admin-ui"])
@@ -509,6 +510,123 @@ async def test_parser_action(
             result["error"] = str(exc)
 
     return templates.TemplateResponse(request, "parsers/_test_result.html", {"result": result})
+
+
+@router.get("/unparsed-emails")
+async def unparsed_emails_page(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_role_html),
+):
+    emails = (
+        await db.execute(select(UnparsedEmail).order_by(UnparsedEmail.created_at.desc()).limit(200))
+    ).scalars().all()
+    return templates.TemplateResponse(request, "unparsed_emails/list.html", {"admin": admin, "emails": emails})
+
+
+@router.get("/unparsed-emails/{unparsed_id}")
+async def unparsed_email_detail_page(
+    unparsed_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_role_html),
+):
+    email = await db.get(UnparsedEmail, unparsed_id)
+    return templates.TemplateResponse(request, "unparsed_emails/detail.html", {"admin": admin, "email": email})
+
+
+async def _reparse_unparsed_email(db: AsyncSession, admin: AdminPin, unparsed: UnparsedEmail) -> None:
+    """Retries parsing `unparsed.body`/`unparsed.subject` against the
+    *current* parser registry — the point of "reparse" is that an
+    operator has since fixed or added a parser mapping, so this must
+    re-load the registry fresh rather than reuse any cached one."""
+    registry = await email_ingest.load_registry(db)
+    parser = registry.find(unparsed.subject, unparsed.body, unparsed.content_type)
+
+    if parser is None:
+        unparsed.reason = "no matching parser"
+        unparsed.parser_slug = None
+        await audit.log(
+            db, actor=admin.label, action="email.reparse_failed", entity_type="unparsed_email", entity_id=unparsed.id,
+            detail={"reason": unparsed.reason},
+        )
+        return
+
+    try:
+        parsed = parser.parse(unparsed.subject, unparsed.body, unparsed.content_type)
+    except ParserError as exc:
+        unparsed.reason = str(exc)
+        unparsed.parser_slug = parser.slug
+        await audit.log(
+            db, actor=admin.label, action="email.reparse_failed", entity_type="unparsed_email", entity_id=unparsed.id,
+            detail={"parser_slug": parser.slug, "reason": unparsed.reason},
+        )
+        return
+
+    reservation = await email_ingest.create_reservation_from_parsed(db, parsed, parser.slug, unparsed.body)
+    unparsed.status = UnparsedEmailStatus.resolved
+    unparsed.resolved_reservation_id = reservation.id
+    unparsed.resolved_at = datetime.now(timezone.utc)
+    await audit.log(
+        db, actor=admin.label, action="reservation.ingested", entity_type="reservation", entity_id=reservation.id,
+        detail={"parser_slug": parser.slug, "subject": unparsed.subject, "via": "reparse"},
+    )
+    await audit.log(
+        db, actor=admin.label, action="email.reparsed", entity_type="unparsed_email", entity_id=unparsed.id,
+        detail={"reservation_id": reservation.id},
+    )
+    await db.flush()
+    await email_ingest.maybe_auto_print(db, reservation)
+
+
+@router.post("/unparsed-emails/{unparsed_id}/reparse")
+async def reparse_unparsed_email_action(
+    unparsed_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_role_html),
+):
+    unparsed = await db.get(UnparsedEmail, unparsed_id)
+    if unparsed is not None:
+        await _reparse_unparsed_email(db, admin, unparsed)
+        await db.commit()
+
+    referer = request.headers.get("referer", "")
+    if f"/unparsed-emails/{unparsed_id}" in referer:
+        email = await db.get(UnparsedEmail, unparsed_id)
+        return templates.TemplateResponse(request, "unparsed_emails/detail.html", {"admin": admin, "email": email})
+
+    emails = (
+        await db.execute(select(UnparsedEmail).order_by(UnparsedEmail.created_at.desc()).limit(200))
+    ).scalars().all()
+    return templates.TemplateResponse(request, "unparsed_emails/list.html", {"admin": admin, "emails": emails})
+
+
+@router.post("/unparsed-emails/{unparsed_id}/ignore")
+async def ignore_unparsed_email_action(
+    unparsed_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_role_html),
+):
+    unparsed = await db.get(UnparsedEmail, unparsed_id)
+    if unparsed is not None and unparsed.status == UnparsedEmailStatus.pending:
+        unparsed.status = UnparsedEmailStatus.ignored
+        unparsed.resolved_at = datetime.now(timezone.utc)
+        await audit.log(
+            db, actor=admin.label, action="email.ignored", entity_type="unparsed_email", entity_id=unparsed.id,
+        )
+        await db.commit()
+
+    referer = request.headers.get("referer", "")
+    if f"/unparsed-emails/{unparsed_id}" in referer:
+        email = await db.get(UnparsedEmail, unparsed_id)
+        return templates.TemplateResponse(request, "unparsed_emails/detail.html", {"admin": admin, "email": email})
+
+    emails = (
+        await db.execute(select(UnparsedEmail).order_by(UnparsedEmail.created_at.desc()).limit(200))
+    ).scalars().all()
+    return templates.TemplateResponse(request, "unparsed_emails/list.html", {"admin": admin, "emails": emails})
 
 
 @router.get("/audit-log")

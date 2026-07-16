@@ -176,9 +176,18 @@ To add support for a new email format:
 
 Emails that don't match any parser (or fail required-field
 extraction) are left in the mailbox marked `\Seen` (so they aren't
-reprocessed every poll) and logged to the audit log with action
-`email.unparsed`, including the subject — check there first if a
-reservation seems to be missing.
+reprocessed every poll), logged to the audit log with action
+`email.unparsed`, and — unlike the audit log, which only records the
+subject — saved in full (subject + body + content type + failure
+reason) to the **Unparsed emails** admin page. After fixing or adding
+a parser mapping for the format that was missed, open the entry there
+and click **Reparse**: it re-runs the *current* parser registry against
+that exact stored email and, on success, creates the reservation (and
+auto-prints it, if auto-print is enabled) exactly as live ingestion
+would have — no need to wait for the sender to resend the email. An
+entry that still doesn't match anything keeps its `pending` status and
+records the new failure reason; entries can also be marked **Ignore**
+if the missed email doesn't need a reservation after all.
 
 ### Multi-room bookings (room lines)
 

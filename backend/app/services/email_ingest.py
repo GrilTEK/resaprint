@@ -32,6 +32,8 @@ from app.models.parser_mapping import ParserFieldMapping
 from app.models.print_station import PrintStation
 from app.models.reservation import Reservation, ReservationStatus
 from app.models.reservation_room_line import ReservationRoomLine
+from app.models.unparsed_email import UnparsedEmail
+from app.schemas.parser import ParsedReservation
 from app.services import audit, printing
 from app.services.app_settings import get_or_create_settings
 from app.services.crypto import decrypt
@@ -183,41 +185,17 @@ async def load_registry(db: AsyncSession) -> ParserRegistry:
     return registry
 
 
-async def _process_email(
-    db: AsyncSession, registry: ParserRegistry, fetched: FetchedEmail, conn_info: ImapConnectionInfo
-) -> None:
-    parser = registry.find(fetched.subject, fetched.body, fetched.content_type)
-
-    if parser is None:
-        await audit.log(
-            db,
-            actor="system",
-            action="email.unparsed",
-            detail={"subject": fetched.subject, "reason": "no matching parser"},
-        )
-        await db.commit()
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, _mark_seen_sync, conn_info, fetched.uid)
-        return
-
-    try:
-        parsed = parser.parse(fetched.subject, fetched.body, fetched.content_type)
-    except ParserError as exc:
-        await audit.log(
-            db,
-            actor="system",
-            action="email.unparsed",
-            detail={"subject": fetched.subject, "parser_slug": parser.slug, "reason": str(exc)},
-        )
-        await db.commit()
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, _mark_seen_sync, conn_info, fetched.uid)
-        return
-
+async def create_reservation_from_parsed(
+    db: AsyncSession, parsed: ParsedReservation, parser_slug: str, raw_body: str
+) -> Reservation:
+    """Builds and persists a Reservation (+ room lines, + auto room
+    assignment if enabled) from a successfully parsed email. Shared by
+    live ingestion and by the "reparse" admin action so both paths stay
+    in sync."""
     reservation = Reservation(
         **parsed.model_dump(exclude={"extra_fields", "room_lines"}),
-        parser_slug=parser.slug,
-        raw_source_text=fetched.body,
+        parser_slug=parser_slug,
+        raw_source_text=raw_body,
         extra_fields=parsed.extra_fields or None,
         status=ReservationStatus.confirmed,
     )
@@ -236,6 +214,58 @@ async def _process_email(
     app_settings = await get_or_create_settings(db)
     if app_settings.room_auto_assign_enabled:
         await assign_rooms_for_reservation(db, reservation)
+    return reservation
+
+
+async def _record_unparsed(
+    db: AsyncSession, fetched: FetchedEmail, reason: str, parser_slug: str | None
+) -> UnparsedEmail:
+    """Persists the raw subject/body of an email no parser could
+    handle, so an operator can fix/add a parser mapping later and
+    reparse this exact email from the admin UI's "Unparsed emails"
+    page instead of waiting for it to be resent."""
+    unparsed = UnparsedEmail(
+        subject=fetched.subject,
+        body=fetched.body,
+        content_type=fetched.content_type,
+        reason=reason,
+        parser_slug=parser_slug,
+    )
+    db.add(unparsed)
+    await db.flush()
+    await audit.log(
+        db,
+        actor="system",
+        action="email.unparsed",
+        entity_type="unparsed_email",
+        entity_id=unparsed.id,
+        detail={"subject": fetched.subject, "parser_slug": parser_slug, "reason": reason},
+    )
+    return unparsed
+
+
+async def _process_email(
+    db: AsyncSession, registry: ParserRegistry, fetched: FetchedEmail, conn_info: ImapConnectionInfo
+) -> None:
+    parser = registry.find(fetched.subject, fetched.body, fetched.content_type)
+
+    if parser is None:
+        await _record_unparsed(db, fetched, reason="no matching parser", parser_slug=None)
+        await db.commit()
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _mark_seen_sync, conn_info, fetched.uid)
+        return
+
+    try:
+        parsed = parser.parse(fetched.subject, fetched.body, fetched.content_type)
+    except ParserError as exc:
+        await _record_unparsed(db, fetched, reason=str(exc), parser_slug=parser.slug)
+        await db.commit()
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _mark_seen_sync, conn_info, fetched.uid)
+        return
+
+    reservation = await create_reservation_from_parsed(db, parsed, parser.slug, fetched.body)
     await audit.log(
         db,
         actor="system",
@@ -246,13 +276,13 @@ async def _process_email(
     )
     await db.commit()
 
-    await _maybe_auto_print(db, reservation)
+    await maybe_auto_print(db, reservation)
 
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, _mark_processed_sync, conn_info, fetched.uid)
 
 
-async def _maybe_auto_print(db: AsyncSession, reservation: Reservation) -> None:
+async def maybe_auto_print(db: AsyncSession, reservation: Reservation) -> None:
     """If enabled in Settings, print a newly-ingested reservation to
     the configured default station automatically — no "Print now"
     click needed. Printing failures are logged but never block

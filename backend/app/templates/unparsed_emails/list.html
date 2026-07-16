@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Unparsed emails — ResaPrint{% endblock %}
+{% block content %}
+<h1>Unparsed emails</h1>
+<p>
+  Emails no parser could handle. The full subject/body of each is kept here —
+  fix or add a <a href="/parsers">parser mapping</a>, then click
+  <strong>Reparse</strong> to retry this exact email without waiting for it
+  to be resent.
+</p>
+
+<div class="card">
+  <table>
+    <thead>
+      <tr><th>When</th><th>Subject</th><th>Parser</th><th>Reason</th><th>Status</th><th></th></tr>
+    </thead>
+    {% include "unparsed_emails/_table_body.html" %}
+  </table>
+</div>
+{% endblock %}
