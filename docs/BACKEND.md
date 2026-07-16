@@ -163,8 +163,10 @@ To add support for a new email format:
      `group_index` picks which capture group to use.
    - **xpath**: matched against the HTML body via `lxml`.
    - **transform**: one of `none`, `strip`, `parse_date_iso`,
-     `parse_date_eu`, `parse_decimal`, `upper`, `lower` — a small
-     fixed set, deliberately no arbitrary code execution.
+     `parse_date_eu`, `parse_date_long` (weekday-prefixed long-form
+     dates like `"Friday, July 31, 2026"` — Cubilis/Stardekk IBE
+     confirmation emails use this), `parse_decimal`, `upper`, `lower`
+     — a small fixed set, deliberately no arbitrary code execution.
    - Mark a field **required**; if a required field can't be
      extracted, the email is left unparsed (logged to the audit log
      as `email.unparsed`) rather than creating a partial reservation.

@@ -49,6 +49,10 @@ def _apply_transform(value: str, transform: FieldTransform) -> str | date | Deci
         return datetime.strptime(value.strip(), "%Y-%m-%d").date()
     if transform == FieldTransform.parse_date_eu:
         return datetime.strptime(value.strip(), "%d-%m-%Y").date()
+    if transform == FieldTransform.parse_date_long:
+        # "Friday, July 31, 2026" — the weekday-prefixed long-form date
+        # Cubilis's HTML confirmation emails use for Arrival/Departure.
+        return datetime.strptime(value.strip(), "%A, %B %d, %Y").date()
     if transform == FieldTransform.parse_decimal:
         cleaned = value.strip().replace(",", "").replace(" ", "")
         try:

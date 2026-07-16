@@ -17,6 +17,7 @@ class FieldTransform(str, enum.Enum):
     strip = "strip"
     parse_date_iso = "parse_date_iso"
     parse_date_eu = "parse_date_eu"
+    parse_date_long = "parse_date_long"  # "Friday, July 31, 2026" (Cubilis HTML confirmation emails)
     parse_decimal = "parse_decimal"
     upper = "upper"
     lower = "lower"
