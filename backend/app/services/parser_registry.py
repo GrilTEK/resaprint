@@ -92,7 +92,19 @@ class GenericFieldMappingParser:
                     raise ParserError(f"required field {field.target_field!r} not found")
                 continue
 
-            values[field.target_field] = _apply_transform(raw_value, field.transform)
+            try:
+                values[field.target_field] = _apply_transform(raw_value, field.transform)
+            except ValueError as exc:
+                # datetime.strptime (parse_date_iso/eu/long) raises plain
+                # ValueError on a format mismatch — surface it as a
+                # ParserError like every other extraction failure (email
+                # unparsed with a clear reason) instead of an unhandled
+                # 500 out of the admin UI's reparse action or a silently
+                # dropped email during live ingestion.
+                raise ParserError(
+                    f"field {field.label!r} ({field.target_field}): could not apply "
+                    f"transform {field.transform.value!r} to {raw_value!r}: {exc}"
+                ) from exc
 
         values.setdefault("source_channel", self._mapping.profile_slug)
 

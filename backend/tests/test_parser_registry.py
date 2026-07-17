@@ -100,6 +100,29 @@ def test_generic_parser_raises_on_missing_required_field():
         parser.parse("subject", SAMPLE_BODY, "text/plain")
 
 
+def test_generic_parser_raises_parser_error_on_transform_value_error():
+    # parse_date_iso expects "YYYY-MM-DD" — a field whose extracted text
+    # doesn't match the strptime format raises a plain ValueError deep
+    # inside datetime.strptime; the parser must convert that into a
+    # ParserError (unparsed email, human-readable reason) rather than
+    # letting an unhandled ValueError blow up the caller (live ingestion
+    # or the admin UI's reparse action).
+    mapping = _mapping(
+        fields=[
+            # Deliberately mapped to a non-date line ("Guest: John
+            # Smith") so parse_date_iso's strptime call fails.
+            _mapping_field(
+                target_field="checkin",
+                pattern=r"^Guest:\s*(.+)$",
+                transform=FieldTransform.parse_date_iso,
+            ),
+        ]
+    )
+    parser = GenericFieldMappingParser(mapping)
+    with pytest.raises(ParserError):
+        parser.parse("subject", SAMPLE_BODY, "text/plain")
+
+
 def test_generic_parser_rejects_unmapped_target_field():
     mapping = _mapping(
         fields=[_mapping_field(target_field="not_a_real_field", pattern=r"^Guest:\s*(.+)$")]

@@ -410,6 +410,14 @@ async def _mapping_or_404(db: AsyncSession, mapping_id: int) -> ParserFieldMappi
         select(ParserFieldMapping)
         .options(selectinload(ParserFieldMapping.fields))
         .where(ParserFieldMapping.id == mapping_id)
+        # populate_existing: this mapping's `fields` collection may
+        # already be loaded (and cached) on an identity-mapped instance
+        # from an earlier query this session — e.g. the list page load
+        # right before an add/update/delete field action re-renders the
+        # form. Without this, selectinload silently reuses the stale
+        # cached collection instead of reflecting the mutation that was
+        # just committed.
+        .execution_options(populate_existing=True)
     )
     return result.scalar_one()
 
@@ -461,7 +469,9 @@ async def add_parser_field_action(
     target_field: str = Form(...),
     extraction_type: ExtractionType = Form(...),
     pattern: str = Form(...),
+    group_index: int = Form(default=1),
     transform: FieldTransform = Form(default=FieldTransform.none),
+    is_required: bool = Form(default=False),
     db: AsyncSession = Depends(get_db),
     admin: AdminPin = Depends(require_admin_role_html),
 ):
@@ -471,7 +481,9 @@ async def add_parser_field_action(
         target_field=target_field,
         extraction_type=extraction_type,
         pattern=pattern,
+        group_index=group_index,
         transform=transform,
+        is_required=is_required,
     )
     db.add(field)
     await audit.log(
@@ -479,6 +491,70 @@ async def add_parser_field_action(
         entity_type="parser_field_mapping", entity_id=mapping_id,
     )
     await db.commit()
+
+    mapping = await _mapping_or_404(db, mapping_id)
+    return templates.TemplateResponse(
+        request,
+        "parsers/_mapping_form.html",
+        {"admin": admin, "mapping": mapping, "target_fields": sorted(PARSED_RESERVATION_FIELDS)},
+    )
+
+
+@router.post("/parsers/{mapping_id}/fields/{field_id}")
+async def update_parser_field_action(
+    mapping_id: int,
+    field_id: int,
+    request: Request,
+    label: str = Form(...),
+    target_field: str = Form(...),
+    extraction_type: ExtractionType = Form(...),
+    pattern: str = Form(...),
+    group_index: int = Form(default=1),
+    transform: FieldTransform = Form(default=FieldTransform.none),
+    is_required: bool = Form(default=False),
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_role_html),
+):
+    field = await db.get(ParserFieldMappingField, field_id)
+    if field is not None and field.mapping_id == mapping_id:
+        field.label = label
+        field.target_field = target_field
+        field.extraction_type = extraction_type
+        field.pattern = pattern
+        field.group_index = group_index
+        field.transform = transform
+        field.is_required = is_required
+        await audit.log(
+            db, actor=admin.label, action="parser.field_updated",
+            entity_type="parser_field_mapping", entity_id=mapping_id, detail={"field_id": field_id},
+        )
+        await db.commit()
+
+    mapping = await _mapping_or_404(db, mapping_id)
+    return templates.TemplateResponse(
+        request,
+        "parsers/_mapping_form.html",
+        {"admin": admin, "mapping": mapping, "target_fields": sorted(PARSED_RESERVATION_FIELDS)},
+    )
+
+
+@router.post("/parsers/{mapping_id}/fields/{field_id}/delete")
+async def delete_parser_field_action(
+    mapping_id: int,
+    field_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_role_html),
+):
+    field = await db.get(ParserFieldMappingField, field_id)
+    if field is not None and field.mapping_id == mapping_id:
+        await audit.log(
+            db, actor=admin.label, action="parser.field_deleted",
+            entity_type="parser_field_mapping", entity_id=mapping_id,
+            detail={"field_id": field_id, "label": field.label, "target_field": field.target_field},
+        )
+        await db.delete(field)
+        await db.commit()
 
     mapping = await _mapping_or_404(db, mapping_id)
     return templates.TemplateResponse(
@@ -554,8 +630,8 @@ async def _reparse_unparsed_email(db: AsyncSession, admin: AdminPin, unparsed: U
 
     try:
         parsed = parser.parse(unparsed.subject, unparsed.body, unparsed.content_type)
-    except ParserError as exc:
-        unparsed.reason = str(exc)
+    except Exception as exc:  # noqa: BLE001 — surfaced to the operator, never a raw 500
+        unparsed.reason = str(exc) if isinstance(exc, ParserError) else f"unexpected error: {exc}"
         unparsed.parser_slug = parser.slug
         await audit.log(
             db, actor=admin.label, action="email.reparse_failed", entity_type="unparsed_email", entity_id=unparsed.id,

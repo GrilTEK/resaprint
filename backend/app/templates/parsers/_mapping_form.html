@@ -6,17 +6,58 @@
 <div class="card">
   <h2>Fields</h2>
   <table>
-    <thead><tr><th>Label</th><th>Target</th><th>Type</th><th>Pattern</th><th>Transform</th><th>Required</th></tr></thead>
+    <thead>
+      <tr>
+        <th>Label</th><th>Target</th><th>Type</th><th>Pattern</th>
+        <th>Group</th><th>Transform</th><th>Required</th><th></th>
+      </tr>
+    </thead>
     <tbody>
       {% for f in mapping.fields %}
-      <tr>
-        <td>{{ f.label }}</td>
-        <td>{{ f.target_field }}</td>
-        <td>{{ f.extraction_type.value }}</td>
-        <td><code>{{ f.pattern }}</code></td>
-        <td>{{ f.transform.value }}</td>
-        <td>{{ "yes" if f.is_required else "no" }}</td>
+      <tr id="field-row-{{ f.id }}">
+        <td><input type="text" name="label" value="{{ f.label }}" required style="width: 8em;"></td>
+        <td>
+          <select name="target_field">
+            {% for tf in target_fields %}
+            <option value="{{ tf }}" {{ "selected" if tf == f.target_field else "" }}>{{ tf }}</option>
+            {% endfor %}
+          </select>
+        </td>
+        <td>
+          <select name="extraction_type">
+            <option value="regex" {{ "selected" if f.extraction_type.value == "regex" else "" }}>regex</option>
+            <option value="xpath" {{ "selected" if f.extraction_type.value == "xpath" else "" }}>xpath</option>
+          </select>
+        </td>
+        <td><input type="text" name="pattern" value="{{ f.pattern }}" required style="width: 16em;"></td>
+        <td><input type="number" name="group_index" value="{{ f.group_index }}" min="0" style="width: 4em;"></td>
+        <td>
+          <select name="transform">
+            {% for t in ["none", "strip", "parse_date_iso", "parse_date_eu", "parse_date_long", "parse_decimal", "upper", "lower"] %}
+            <option value="{{ t }}" {{ "selected" if t == f.transform.value else "" }}>{{ t }}</option>
+            {% endfor %}
+          </select>
+        </td>
+        <td><input type="checkbox" name="is_required" value="true" {{ "checked" if f.is_required else "" }}></td>
+        <td>
+          <button
+            type="button"
+            hx-post="/parsers/{{ mapping.id }}/fields/{{ f.id }}"
+            hx-include="#field-row-{{ f.id }} input, #field-row-{{ f.id }} select"
+            hx-target="body"
+          >Save</button>
+          <button
+            type="button"
+            hx-post="/parsers/{{ mapping.id }}/fields/{{ f.id }}/delete"
+            hx-target="body"
+            hx-confirm="Delete field &quot;{{ f.label }}&quot;?"
+            class="secondary"
+            style="background: var(--danger); color: #fff;"
+          >Delete</button>
+        </td>
       </tr>
+      {% else %}
+      <tr><td colspan="8">No fields yet — add one below.</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -33,6 +74,7 @@
       <select name="extraction_type"><option value="regex">regex</option><option value="xpath">xpath</option></select>
     </div>
     <div class="form-row"><label>Pattern</label><input type="text" name="pattern" required></div>
+    <div class="form-row"><label>Group index (regex only)</label><input type="number" name="group_index" value="1" min="0"></div>
     <div class="form-row"><label>Transform</label>
       <select name="transform">
         <option value="none">none</option>
@@ -44,6 +86,9 @@
         <option value="upper">upper</option>
         <option value="lower">lower</option>
       </select>
+    </div>
+    <div class="form-row">
+      <label><input type="checkbox" name="is_required" value="true" checked> Required</label>
     </div>
     <button type="submit">Add field</button>
   </form>
