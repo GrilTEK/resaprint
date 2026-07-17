@@ -56,6 +56,39 @@ async def test_reparse_with_no_matching_parser_stays_pending(authed_client: Asyn
 
 
 @pytest.mark.asyncio
+async def test_reparse_recovers_when_required_reservation_field_missing(
+    authed_client: AsyncClient, db_session: AsyncSession
+):
+    """A mapping that matches the subject and extracts every mapped
+    field can still fail at ParsedReservation.model_validate() if a
+    field the schema requires (checkin/checkout) was never mapped at
+    all — a plain pydantic ValidationError, not a ParserError. This
+    must not 500 the reparse request either."""
+    unparsed = await _seed_unparsed(db_session)
+
+    mapping = ParserFieldMapping(profile_slug="generic_test", match_subject_regex="Reservation confirmed")
+    db_session.add(mapping)
+    await db_session.flush()
+    db_session.add(
+        ParserFieldMappingField(
+            mapping_id=mapping.id, label="Guest", target_field="guest_name",
+            extraction_type=ExtractionType.regex, pattern=r"Guest: (.+)", transform=FieldTransform.strip,
+        )
+    )
+    await db_session.commit()
+
+    response = await authed_client.post(f"/unparsed-emails/{unparsed.id}/reparse")
+    assert response.status_code == 200
+
+    await db_session.refresh(unparsed)
+    assert unparsed.status == UnparsedEmailStatus.pending
+    assert "unexpected error" in unparsed.reason
+
+    audit_result = await db_session.execute(select(AuditLog).where(AuditLog.action == "email.reparse_failed"))
+    assert len(audit_result.scalars().all()) == 1
+
+
+@pytest.mark.asyncio
 async def test_reparse_after_adding_matching_parser_creates_reservation(
     authed_client: AsyncClient, db_session: AsyncSession
 ):
@@ -97,14 +130,67 @@ async def test_reparse_after_adding_matching_parser_creates_reservation(
 
 
 @pytest.mark.asyncio
-async def test_ignore_marks_email_ignored(authed_client: AsyncClient, db_session: AsyncSession):
+async def test_ignore_deletes_the_email(authed_client: AsyncClient, db_session: AsyncSession):
+    unparsed = await _seed_unparsed(db_session)
+    unparsed_id = unparsed.id
+
+    response = await authed_client.post(f"/unparsed-emails/{unparsed_id}/ignore")
+    assert response.status_code == 200
+    assert UNMATCHED_SUBJECT not in response.text
+
+    assert await db_session.get(UnparsedEmail, unparsed_id) is None
+
+    audit_result = await db_session.execute(select(AuditLog).where(AuditLog.action == "email.ignored"))
+    assert len(audit_result.scalars().all()) == 1
+
+
+@pytest.mark.asyncio
+async def test_reparse_recovers_from_unexpected_exception(
+    authed_client: AsyncClient, db_session: AsyncSession, monkeypatch
+):
+    """A failure that isn't a ParserError (e.g. a DB error while
+    creating the reservation) must still leave the entry pending with a
+    recorded reason, not 500 the request — reproduces the "Reparse
+    button does nothing" symptom without a raw crash."""
     unparsed = await _seed_unparsed(db_session)
 
-    response = await authed_client.post(f"/unparsed-emails/{unparsed.id}/ignore")
+    mapping = ParserFieldMapping(profile_slug="generic_test", match_subject_regex="Reservation confirmed")
+    db_session.add(mapping)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            ParserFieldMappingField(
+                mapping_id=mapping.id, label="Guest", target_field="guest_name",
+                extraction_type=ExtractionType.regex, pattern=r"Guest: (.+)", transform=FieldTransform.strip,
+            ),
+            ParserFieldMappingField(
+                mapping_id=mapping.id, label="Checkin", target_field="checkin",
+                extraction_type=ExtractionType.regex, pattern=r"Checkin: (.+)", transform=FieldTransform.parse_date_iso,
+            ),
+            ParserFieldMappingField(
+                mapping_id=mapping.id, label="Checkout", target_field="checkout",
+                extraction_type=ExtractionType.regex, pattern=r"Checkout: (.+)", transform=FieldTransform.parse_date_iso,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    from app.services import email_ingest
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("simulated DB failure")
+
+    monkeypatch.setattr(email_ingest, "create_reservation_from_parsed", _boom)
+
+    response = await authed_client.post(f"/unparsed-emails/{unparsed.id}/reparse")
     assert response.status_code == 200
 
     await db_session.refresh(unparsed)
-    assert unparsed.status == UnparsedEmailStatus.ignored
+    assert unparsed.status == UnparsedEmailStatus.pending
+    assert "simulated DB failure" in unparsed.reason
+
+    audit_result = await db_session.execute(select(AuditLog).where(AuditLog.action == "email.reparse_failed"))
+    assert len(audit_result.scalars().all()) == 1
 
 
 @pytest.mark.asyncio

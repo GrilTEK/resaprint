@@ -615,40 +615,64 @@ async def _reparse_unparsed_email(db: AsyncSession, admin: AdminPin, unparsed: U
     """Retries parsing `unparsed.body`/`unparsed.subject` against the
     *current* parser registry — the point of "reparse" is that an
     operator has since fixed or added a parser mapping, so this must
-    re-load the registry fresh rather than reuse any cached one."""
-    registry = await email_ingest.load_registry(db)
-    parser = registry.find(unparsed.subject, unparsed.body, unparsed.content_type)
+    re-load the registry fresh rather than reuse any cached one.
 
-    if parser is None:
-        unparsed.reason = "no matching parser"
-        unparsed.parser_slug = None
-        await audit.log(
-            db, actor=admin.label, action="email.reparse_failed", entity_type="unparsed_email", entity_id=unparsed.id,
-            detail={"reason": unparsed.reason},
-        )
-        return
+    Everything from the registry lookup through reservation creation
+    runs under one try/except: any failure — an expected ParserError, a
+    "no matching parser" case, or a genuinely unexpected exception
+    (e.g. a DB constraint violation while creating the reservation) —
+    is recorded on the entry instead of propagating. An unhandled
+    exception here would 500 the request, which to the operator reads
+    as "the Reparse button doesn't do anything."
+    """
+    # Captured up front as plain values: db.rollback() (in the except
+    # branch below) expires *every* identity-mapped object in the
+    # session, not just `unparsed` — including `admin`, whose .label
+    # would otherwise need an async refresh that a bare attribute
+    # access can't do (raises MissingGreenlet).
+    admin_label = admin.label
+    unparsed_id = unparsed.id
+    subject, body, content_type = unparsed.subject, unparsed.body, unparsed.content_type
+    parser_slug: str | None = None
 
     try:
-        parsed = parser.parse(unparsed.subject, unparsed.body, unparsed.content_type)
+        registry = await email_ingest.load_registry(db)
+        parser = registry.find(subject, body, content_type)
+        if parser is None:
+            raise ParserError("no matching parser")
+        parser_slug = parser.slug
+        parsed = parser.parse(subject, body, content_type)
+        reservation = await email_ingest.create_reservation_from_parsed(db, parsed, parser.slug, body)
     except Exception as exc:  # noqa: BLE001 — surfaced to the operator, never a raw 500
-        unparsed.reason = str(exc) if isinstance(exc, ParserError) else f"unexpected error: {exc}"
-        unparsed.parser_slug = parser.slug
+        # A failure partway through (e.g. create_reservation_from_parsed
+        # raising after a flush) leaves the session's transaction
+        # unusable — roll back and re-fetch a clean copy of `unparsed`
+        # before recording the failure reason on it. rollback() expires
+        # every identity-mapped object including `admin`, which the
+        # caller renders into the nav template right after this
+        # returns — refresh it now so that sync attribute access in
+        # Jinja doesn't hit an expired object outside a greenlet.
+        await db.rollback()
+        await db.refresh(admin)
+        fresh = await db.get(UnparsedEmail, unparsed_id)
+        reason = str(exc) if isinstance(exc, ParserError) else f"unexpected error: {exc}"
+        fresh.reason = reason
+        fresh.parser_slug = parser_slug
         await audit.log(
-            db, actor=admin.label, action="email.reparse_failed", entity_type="unparsed_email", entity_id=unparsed.id,
-            detail={"parser_slug": parser.slug, "reason": unparsed.reason},
+            db, actor=admin_label, action="email.reparse_failed", entity_type="unparsed_email", entity_id=unparsed_id,
+            detail={"parser_slug": parser_slug, "reason": reason},
         )
         return
 
-    reservation = await email_ingest.create_reservation_from_parsed(db, parsed, parser.slug, unparsed.body)
     unparsed.status = UnparsedEmailStatus.resolved
     unparsed.resolved_reservation_id = reservation.id
     unparsed.resolved_at = datetime.now(timezone.utc)
     await audit.log(
-        db, actor=admin.label, action="reservation.ingested", entity_type="reservation", entity_id=reservation.id,
-        detail={"parser_slug": parser.slug, "subject": unparsed.subject, "via": "reparse"},
+        db, actor=admin_label, action="reservation.ingested", entity_type="reservation", entity_id=reservation.id,
+        detail={"parser_slug": parser_slug, "subject": subject, "via": "reparse"},
     )
     await audit.log(
-        db, actor=admin.label, action="email.reparsed", entity_type="unparsed_email", entity_id=unparsed.id,
+        db, actor=admin_label, action="email.reparsed", entity_type="unparsed_email", entity_id=unparsed_id,
         detail={"reservation_id": reservation.id},
     )
     await db.flush()
@@ -685,20 +709,21 @@ async def ignore_unparsed_email_action(
     db: AsyncSession = Depends(get_db),
     admin: AdminPin = Depends(require_admin_role_html),
 ):
+    # Ignore deletes the entry outright — there's nothing to keep once
+    # an operator has decided a missed email doesn't need a
+    # reservation, and a growing pile of dead "ignored" rows was more
+    # clutter than a useful record (the deletion itself is still
+    # audit-logged).
     unparsed = await db.get(UnparsedEmail, unparsed_id)
     if unparsed is not None and unparsed.status == UnparsedEmailStatus.pending:
-        unparsed.status = UnparsedEmailStatus.ignored
-        unparsed.resolved_at = datetime.now(timezone.utc)
         await audit.log(
             db, actor=admin.label, action="email.ignored", entity_type="unparsed_email", entity_id=unparsed.id,
+            detail={"subject": unparsed.subject},
         )
+        await db.delete(unparsed)
         await db.commit()
 
-    referer = request.headers.get("referer", "")
-    if f"/unparsed-emails/{unparsed_id}" in referer:
-        email = await db.get(UnparsedEmail, unparsed_id)
-        return templates.TemplateResponse(request, "unparsed_emails/detail.html", {"admin": admin, "email": email})
-
+    # No detail page to return to — the entry is gone either way.
     emails = (
         await db.execute(select(UnparsedEmail).order_by(UnparsedEmail.created_at.desc()).limit(200))
     ).scalars().all()

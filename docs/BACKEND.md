@@ -186,8 +186,12 @@ that exact stored email and, on success, creates the reservation (and
 auto-prints it, if auto-print is enabled) exactly as live ingestion
 would have — no need to wait for the sender to resend the email. An
 entry that still doesn't match anything keeps its `pending` status and
-records the new failure reason; entries can also be marked **Ignore**
-if the missed email doesn't need a reservation after all.
+records the new failure reason (any parsing failure — including an
+unexpected one, not just the usual "field not found" — is caught and
+recorded rather than left to crash the request). Entries can also be
+deleted outright via **Ignore** if the missed email doesn't need a
+reservation after all (the deletion itself is still audit-logged as
+`email.ignored`).
 
 ### Multi-room bookings (room lines)
 

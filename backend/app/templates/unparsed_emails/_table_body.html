@@ -14,7 +14,7 @@
       <button
         hx-post="/unparsed-emails/{{ e.id }}/ignore"
         hx-target="body"
-        hx-confirm="Ignore this email? It will stay listed for reference but won't count as pending."
+        hx-confirm="Delete this email? This can't be undone — reparse it instead if you might fix the parser later."
         class="secondary"
       >Ignore</button>
       {% endif %}
