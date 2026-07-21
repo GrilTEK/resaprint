@@ -128,6 +128,14 @@ async def test_reparse_after_adding_matching_parser_creates_reservation(
     audit_result = await db_session.execute(select(AuditLog).where(AuditLog.action == "email.reparsed"))
     assert len(audit_result.scalars().all()) == 1
 
+    # A successfully reparsed entry drops off the default list...
+    assert UNMATCHED_SUBJECT not in response.text
+    list_response = await authed_client.get("/unparsed-emails")
+    assert UNMATCHED_SUBJECT not in list_response.text
+    # ...but is still visible in the archive view.
+    archive_response = await authed_client.get("/unparsed-emails", params={"show_resolved": "1"})
+    assert UNMATCHED_SUBJECT in archive_response.text
+
 
 @pytest.mark.asyncio
 async def test_ignore_deletes_the_email(authed_client: AsyncClient, db_session: AsyncSession):

@@ -218,6 +218,12 @@ deleted outright via **Ignore** if the missed email doesn't need a
 reservation after all (the deletion itself is still audit-logged as
 `email.ignored`).
 
+A successfully reparsed entry (`status=resolved`) drops off the
+**Unparsed emails** list by default — once it's resolved into a
+reservation there's nothing left to act on, so leaving it in the list
+forever just buries the ones that still need attention. Use **show
+resolved (archive)** on the list page to see them again.
+
 ### Multi-room bookings (room lines)
 
 A single `guest_name`/`checkin`/`checkout` field mapping only captures
@@ -268,12 +274,22 @@ unless you capture `price_per_night` yourself).
   `room_assignment.py::room_plan_grid`, which reads both assignment
   paths (the reservation-level `assigned_room_id` and the per-room-line
   one) once for the whole date range rather than querying per day.
-- **Manual / walk-in entry** (`/reservations/new`, also linked as
-  "New reservation" / "Walk-in" from the reservations list) — a plain
-  HTML form over the same `POST /api/v1/reservations` behavior every
-  other manual reservation creation already used (`status=manual`).
-  "Walk-in" is just a pre-filled shortcut (today's date, `walkin` as
-  the source channel) — there's no separate walk-in status or table.
+- **Manual entry** (`/reservations/new`) — a full form (guest
+  contact info, dates, free-text room type, price/currency, source
+  channel, reference) that creates a `status=manual` reservation.
+- **Walk-in entry** (`/reservations/walkin`, separate from the manual
+  form above) — deliberately minimal: guest name and departure date
+  only (arrival is always today, set automatically), a specific room
+  picked by number from active rooms (not a free-text category —
+  `room_type` is filled in from the chosen room's `category`, and
+  `assigned_room_id` is set directly, skipping auto-assignment), price,
+  and adults (required) / children (optional). Currency is always
+  `EUR`, `source_channel` is always `"01"`, and `external_ref` is
+  auto-generated as `DDMMYY` + a 2-digit sequence — e.g. the 3rd
+  walk-in checking in on 21 July 2026 gets `21072603`. The sequence
+  (`admin_ui.py::_next_walkin_ref`) counts existing `source_channel
+  == "01"` reservations whose check-in falls in the same Mon–Sun week,
+  so it resets to 01 every week rather than growing forever.
 - **Status changes**: a reservation's detail page has a "Change to"
   status dropdown (any admin or reception session), including
   cancelling it — this previously only existed as a raw API call

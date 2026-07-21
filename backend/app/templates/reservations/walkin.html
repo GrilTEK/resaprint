@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Walk-in — ResaPrint{% endblock %}
+{% block content %}
+<h1>Walk-in reservation</h1>
+
+{% if not rooms %}
+<div class="card">
+  <p>Ni aktivnih sob — najprej dodaj sobo na strani <a href="/rooms">Rooms</a>.</p>
+</div>
+{% else %}
+<form method="post" action="/reservations/walkin" class="card">
+  <div class="form-row">
+    <label>Ime in priimek gosta</label>
+    <input type="text" name="guest_name" required autofocus>
+  </div>
+  <div class="form-row">
+    <label>Odhod</label>
+    <input type="date" name="checkout" value="{{ default_checkout }}" required>
+  </div>
+  <div class="form-row">
+    <label>Soba</label>
+    <select name="room_id" required>
+      {% for room in rooms %}
+      <option value="{{ room.id }}">{{ room.room_number }} — {{ room.category }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="form-row">
+    <label>Cena</label>
+    <input type="text" name="price_total" placeholder="npr. 120.00">
+  </div>
+  <div class="form-row">
+    <label>Odrasli</label>
+    <input type="number" name="guests_adults" value="1" min="1" required>
+  </div>
+  <div class="form-row">
+    <label>Otroci</label>
+    <input type="number" name="guests_children" value="0" min="0">
+  </div>
+  <button type="submit">Vpiši walk-in</button>
+</form>
+{% endif %}
+{% endblock %}

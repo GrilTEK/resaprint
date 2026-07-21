@@ -52,19 +52,12 @@ async def test_new_reservation_page_requires_auth(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_new_reservation_page_prefills_walkin_defaults(authed_client: AsyncClient):
-    response = await authed_client.get("/reservations/new", params={"walkin": "1"})
-    assert response.status_code == 200
-    assert 'value="walkin"' in response.text
-
-
-@pytest.mark.asyncio
 async def test_create_reservation_via_form_redirects_to_detail(authed_client: AsyncClient):
     response = await authed_client.post(
         "/reservations/new",
         data={
             "guest_name": "Form Guest",
-            "source_channel": "walkin",
+            "source_channel": "manual",
             "checkin": "2026-09-01",
             "checkout": "2026-09-02",
             "room_type": "Single",
@@ -79,4 +72,4 @@ async def test_create_reservation_via_form_redirects_to_detail(authed_client: As
     detail_resp = await authed_client.get(response.headers["location"])
     assert detail_resp.status_code == 200
     assert "Form Guest" in detail_resp.text
-    assert "manual" in detail_resp.text or "walkin" in detail_resp.text
+    assert "manual" in detail_resp.text

@@ -216,7 +216,6 @@ async def room_plan_page(
 @router.get("/reservations/new")
 async def new_reservation_page(
     request: Request,
-    walkin: bool = Query(default=False),
     db: AsyncSession = Depends(get_db),
     admin: AdminPin = Depends(require_admin_session_html),
 ):
@@ -226,7 +225,6 @@ async def new_reservation_page(
         "reservations/new.html",
         {
             "admin": admin,
-            "walkin": walkin,
             "default_checkin": today,
             "default_checkout": today + timedelta(days=1),
         },
@@ -283,6 +281,90 @@ async def create_reservation_action(
         entity_type="reservation",
         entity_id=reservation.id,
         detail={"source_channel": reservation.source_channel},
+    )
+    await db.commit()
+    return RedirectResponse(f"/reservations/{reservation.id}", status_code=303)
+
+
+async def _next_walkin_ref(db: AsyncSession, today: date) -> str:
+    """DDMMYY + a 2-digit sequence number that resets every week (Mon-Sun) —
+    e.g. the 3rd walk-in checking in on 2026-07-21 gets "21072603".
+    The sequence counts existing walk-ins (source_channel "01") whose
+    checkin falls in the same Mon-Sun week as `today`, not "today" —
+    a walk-in's checkin is always today by construction, so this is
+    equivalent, but phrasing it as a week range is what actually
+    implements the "resets at the end of the week" requirement."""
+    monday = today - timedelta(days=today.weekday())
+    sunday = monday + timedelta(days=6)
+    count = (
+        await db.execute(
+            select(func.count()).select_from(Reservation).where(
+                Reservation.source_channel == "01",
+                Reservation.checkin >= monday,
+                Reservation.checkin <= sunday,
+            )
+        )
+    ).scalar_one()
+    return f"{today.strftime('%d%m%y')}{count + 1:02d}"
+
+
+@router.get("/reservations/walkin")
+async def new_walkin_page(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_session_html),
+):
+    rooms = (await db.execute(select(Room).where(Room.is_active.is_(True)).order_by(Room.room_number))).scalars().all()
+    return templates.TemplateResponse(
+        request,
+        "reservations/walkin.html",
+        {"admin": admin, "rooms": rooms, "default_checkout": date.today() + timedelta(days=1)},
+    )
+
+
+@router.post("/reservations/walkin")
+async def create_walkin_action(
+    request: Request,
+    guest_name: str = Form(...),
+    checkout: date = Form(...),
+    room_id: int = Form(...),
+    price_total: str = Form(default=""),
+    guests_adults: int = Form(...),
+    guests_children: int = Form(default=0),
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_session_html),
+):
+    today = date.today()
+    room = await db.get(Room, room_id)
+
+    try:
+        parsed_price = Decimal(price_total) if price_total.strip() else None
+    except InvalidOperation:
+        parsed_price = None
+
+    reservation = Reservation(
+        guest_name=guest_name,
+        source_channel="01",
+        external_ref=await _next_walkin_ref(db, today),
+        checkin=today,
+        checkout=checkout,
+        room_type=room.category if room else None,
+        assigned_room_id=room.id if room else None,
+        guests_adults=guests_adults,
+        guests_children=guests_children,
+        price_total=parsed_price,
+        price_currency="EUR",
+        status=ReservationStatus.manual,
+    )
+    db.add(reservation)
+    await db.flush()
+    await audit.log(
+        db,
+        actor=admin.label,
+        action="reservation.created_manual",
+        entity_type="reservation",
+        entity_id=reservation.id,
+        detail={"source_channel": "01", "walkin": True, "room_id": room.id if room else None},
     )
     await db.commit()
     return RedirectResponse(f"/reservations/{reservation.id}", status_code=303)
@@ -804,16 +886,28 @@ async def test_parser_action(
     return templates.TemplateResponse(request, "parsers/_test_result.html", {"result": result})
 
 
+async def _list_unparsed(db: AsyncSession, show_resolved: bool = False) -> list[UnparsedEmail]:
+    """Successfully reparsed entries default to hidden — once an email
+    has been resolved into a reservation there's nothing left to act
+    on, and leaving it in the list forever just buries the emails that
+    still need attention. `show_resolved` opts into the archive view."""
+    query = select(UnparsedEmail).order_by(UnparsedEmail.created_at.desc()).limit(200)
+    if not show_resolved:
+        query = query.where(UnparsedEmail.status == UnparsedEmailStatus.pending)
+    return (await db.execute(query)).scalars().all()
+
+
 @router.get("/unparsed-emails")
 async def unparsed_emails_page(
     request: Request,
+    show_resolved: bool = Query(default=False),
     db: AsyncSession = Depends(get_db),
     admin: AdminPin = Depends(require_admin_role_html),
 ):
-    emails = (
-        await db.execute(select(UnparsedEmail).order_by(UnparsedEmail.created_at.desc()).limit(200))
-    ).scalars().all()
-    return templates.TemplateResponse(request, "unparsed_emails/list.html", {"admin": admin, "emails": emails})
+    emails = await _list_unparsed(db, show_resolved)
+    return templates.TemplateResponse(
+        request, "unparsed_emails/list.html", {"admin": admin, "emails": emails, "show_resolved": show_resolved}
+    )
 
 
 @router.get("/unparsed-emails/{unparsed_id}")
@@ -922,10 +1016,10 @@ async def reparse_unparsed_email_action(
         email = await db.get(UnparsedEmail, unparsed_id)
         return templates.TemplateResponse(request, "unparsed_emails/detail.html", {"admin": admin, "email": email})
 
-    emails = (
-        await db.execute(select(UnparsedEmail).order_by(UnparsedEmail.created_at.desc()).limit(200))
-    ).scalars().all()
-    return templates.TemplateResponse(request, "unparsed_emails/list.html", {"admin": admin, "emails": emails})
+    emails = await _list_unparsed(db)
+    return templates.TemplateResponse(
+        request, "unparsed_emails/list.html", {"admin": admin, "emails": emails, "show_resolved": False}
+    )
 
 
 @router.post("/unparsed-emails/{unparsed_id}/ignore")
@@ -950,10 +1044,10 @@ async def ignore_unparsed_email_action(
         await db.commit()
 
     # No detail page to return to — the entry is gone either way.
-    emails = (
-        await db.execute(select(UnparsedEmail).order_by(UnparsedEmail.created_at.desc()).limit(200))
-    ).scalars().all()
-    return templates.TemplateResponse(request, "unparsed_emails/list.html", {"admin": admin, "emails": emails})
+    emails = await _list_unparsed(db)
+    return templates.TemplateResponse(
+        request, "unparsed_emails/list.html", {"admin": admin, "emails": emails, "show_resolved": False}
+    )
 
 
 @router.get("/audit-log")

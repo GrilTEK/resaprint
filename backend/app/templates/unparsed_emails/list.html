@@ -6,7 +6,12 @@
   Emails no parser could handle. The full subject/body of each is kept here —
   fix or add a <a href="/parsers">parser mapping</a>, then click
   <strong>Reparse</strong> to retry this exact email without waiting for it
-  to be resent.
+  to be resent. A successfully reparsed email drops off this list —
+  {% if show_resolved %}
+  <a href="/unparsed-emails">hide resolved</a>.
+  {% else %}
+  <a href="/unparsed-emails?show_resolved=1">show resolved (archive)</a>.
+  {% endif %}
 </p>
 
 <div class="card">
