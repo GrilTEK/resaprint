@@ -796,12 +796,8 @@ async def test_parser_action(
     result = {"matched": matched, "parsed": None, "error": None}
     if matched:
         try:
-            if mapping.kind == ParserMappingKind.cancellation:
-                external_ref = parser.extract_cancellation_ref(body, "text/plain")
-                result["parsed"] = {"kind": "cancellation", "external_ref": external_ref}
-            else:
-                parsed = parser.parse(subject, body, "text/plain")
-                result["parsed"] = parsed.model_dump(mode="json")
+            parsed = parser.parse(subject, body, "text/plain")
+            result["parsed"] = parsed.model_dump(mode="json")
         except Exception as exc:  # noqa: BLE001 — surfaced to the operator, not swallowed
             result["error"] = str(exc)
 

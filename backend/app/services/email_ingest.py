@@ -186,18 +186,25 @@ async def load_registry(db: AsyncSession) -> ParserRegistry:
 
 
 async def create_reservation_from_parsed(
-    db: AsyncSession, parsed: ParsedReservation, parser_slug: str, raw_body: str
+    db: AsyncSession,
+    parsed: ParsedReservation,
+    parser_slug: str,
+    raw_body: str,
+    status: ReservationStatus = ReservationStatus.confirmed,
 ) -> Reservation:
     """Builds and persists a Reservation (+ room lines, + auto room
     assignment if enabled) from a successfully parsed email. Shared by
     live ingestion and by the "reparse" admin action so both paths stay
-    in sync."""
+    in sync. `status` defaults to confirmed but a cancellation-kind
+    parser match for a booking we never actually ingested (e.g. the
+    confirmation email arrived after the cancellation, or was itself
+    missed) uses this to create the reservation already cancelled."""
     reservation = Reservation(
         **parsed.model_dump(exclude={"extra_fields", "room_lines"}),
         parser_slug=parser_slug,
         raw_source_text=raw_body,
         extra_fields=parsed.extra_fields or None,
-        status=ReservationStatus.confirmed,
+        status=status,
     )
     for index, room_line in enumerate(parsed.room_lines):
         reservation.room_lines.append(
@@ -220,28 +227,43 @@ async def create_reservation_from_parsed(
 async def apply_cancellation_email(
     db: AsyncSession, parser: GenericFieldMappingParser, subject: str, body: str, content_type: str
 ) -> Reservation:
-    """For a `kind="cancellation"` parser match: extracts the
-    reservation reference and marks the existing Reservation cancelled
-    instead of creating a new one — an OTA "booking cancelled" notice
-    often reuses a template very similar to the original confirmation
-    email, so treating every match as a new booking would silently
-    create a duplicate reservation instead of cancelling the real one.
+    """For a `kind="cancellation"` parser match: parses the email the
+    same way a reservation-kind profile would (guest_name, checkin,
+    checkout, external_ref, etc. must be mapped the same way), then:
+
+    - if a reservation with the same `external_ref` already exists,
+      marks *that* one cancelled instead of creating a duplicate — an
+      OTA "booking cancelled" notice often reuses a template very
+      similar to the original confirmation email;
+    - otherwise (the confirmation was never ingested — missed,
+      arrived out of order, etc.) creates a new reservation from the
+      cancellation email's own data, already `cancelled`, so the
+      booking still shows up somewhere instead of vanishing. It is
+      never auto-printed (the caller skips that for any cancellation
+      match, new record or not).
+
     Raises ParserError (handled the same way as any other parse
     failure — left as an unparsed email for manual follow-up) if the
-    reference can't be extracted or doesn't match any known
-    reservation."""
-    external_ref = parser.extract_cancellation_ref(body, content_type)
+    email doesn't have everything a reservation needs, or has no
+    `external_ref` at all."""
+    parsed = parser.parse(subject, body, content_type)
+    if not parsed.external_ref:
+        raise ParserError("cancellation email has no reservation reference (external_ref)")
+
     reservation = (
         await db.execute(
             select(Reservation)
-            .where(Reservation.external_ref == external_ref, Reservation.status != ReservationStatus.cancelled)
+            .where(Reservation.external_ref == parsed.external_ref, Reservation.status != ReservationStatus.cancelled)
             .order_by(Reservation.created_at.desc())
         )
     ).scalars().first()
-    if reservation is None:
-        raise ParserError(f"cancellation email for unknown reservation ref {external_ref!r}")
-    reservation.status = ReservationStatus.cancelled
-    return reservation
+    if reservation is not None:
+        reservation.status = ReservationStatus.cancelled
+        return reservation
+
+    return await create_reservation_from_parsed(
+        db, parsed, parser.slug, body, status=ReservationStatus.cancelled
+    )
 
 
 async def _record_unparsed(
@@ -293,8 +315,18 @@ async def _process_email(
         else:
             parsed = parser.parse(fetched.subject, fetched.body, fetched.content_type)
             reservation = await create_reservation_from_parsed(db, parsed, parser.slug, fetched.body)
-    except ParserError as exc:
-        await _record_unparsed(db, fetched, reason=str(exc), parser_slug=parser.slug)
+    except Exception as exc:  # noqa: BLE001
+        # Not just ParserError: a mapping that never mapped a
+        # schema-required field (guest_name/checkin/checkout/...) at
+        # all raises a plain pydantic ValidationError from
+        # ParsedReservation.model_validate(), not a ParserError. Left
+        # uncaught, this email would never get marked seen/processed
+        # and the poller would retry — and fail on — the exact same
+        # message every single cycle forever, silently, instead of
+        # showing up in Unparsed emails for an operator to fix.
+        await db.rollback()
+        reason = str(exc) if isinstance(exc, ParserError) else f"unexpected error: {exc}"
+        await _record_unparsed(db, fetched, reason=reason, parser_slug=parser.slug)
         await db.commit()
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, _mark_seen_sync, conn_info, fetched.uid)

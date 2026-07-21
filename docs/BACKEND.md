@@ -181,13 +181,23 @@ new booking) or `cancellation`. Use `cancellation` for an OTA's
 "booking cancelled" email, which often reuses a template very similar
 to the original confirmation — routing it through a normal
 `reservation` profile would silently create a duplicate booking
-instead of cancelling the real one. A cancellation profile only needs
-one field mapped: whichever one targets `external_ref`, used to look
-up the existing `Reservation` by that reference and mark it
-`cancelled`. Other mapped fields on a cancellation profile are
-ignored. If the reference doesn't match any known reservation (or
-can't be extracted), the email is left unparsed with a reason, same
-as any other parse failure — nothing is silently dropped.
+instead of cancelling the real one. A cancellation profile is mapped
+the same way as a reservation profile — guest_name, checkin, checkout,
+external_ref, etc. are all still required fields, since the parser
+needs a full `ParsedReservation` to fall back to (see below).
+
+On a match:
+- if a `Reservation` with the same `external_ref` already exists, it
+  is marked `cancelled` — nothing else about it is changed;
+- otherwise (the original confirmation email was itself missed, or
+  arrived out of order) a **new** reservation is created from the
+  cancellation email's own data, already `cancelled`, rather than the
+  booking silently vanishing. It is never auto-printed either way,
+  new record or not.
+
+If the email can't be fully parsed (a required field missing, no
+`external_ref`, etc.), it's left unparsed with a reason, same as any
+other parse failure — nothing is silently dropped.
 
 Emails that don't match any parser (or fail required-field
 extraction) are left in the mailbox marked `\Seen` (so they aren't

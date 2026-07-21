@@ -7,12 +7,15 @@
   <h2>Kind</h2>
   <p style="color: #666; font-size: 0.85rem;">
     <strong>reservation</strong>: a match creates a new booking.
-    <strong>cancellation</strong>: a match looks up the existing
-    reservation by its mapped <code>external_ref</code> field and
-    marks it cancelled instead of creating a duplicate — use this for
-    an OTA's "booking cancelled" notice email. Only the field mapped
-    to <code>external_ref</code> matters for a cancellation profile;
-    other mapped fields are ignored.
+    <strong>cancellation</strong>: use this for an OTA's "booking
+    cancelled" notice email — map fields the same way as a reservation
+    profile (guest_name, checkin, checkout, external_ref, etc. are
+    still required). A match looks up the existing reservation by
+    <code>external_ref</code> and marks <em>that one</em> cancelled
+    instead of creating a duplicate. If no reservation with that
+    reference exists yet (e.g. the original confirmation email was
+    itself missed), a new reservation is created from this email's own
+    data, already cancelled — it is never auto-printed either way.
   </p>
   <form hx-post="/parsers/{{ mapping.id }}/kind" hx-target="body">
     <div class="form-row">

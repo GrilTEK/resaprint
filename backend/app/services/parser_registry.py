@@ -85,22 +85,6 @@ class GenericFieldMappingParser:
             return True
         return re.search(pattern, raw_subject) is not None
 
-    def extract_cancellation_ref(self, raw_body: str, content_type: str) -> str:
-        """For a `kind="cancellation"` mapping: extract just the
-        reservation reference used to look up the existing Reservation
-        to cancel. The rest of the mapped fields (if any) are ignored —
-        a cancellation notice doesn't need a full ParsedReservation."""
-        field = next((f for f in self._mapping.fields if f.target_field == "external_ref"), None)
-        if field is None:
-            raise ParserError("cancellation parser has no external_ref field mapped")
-        raw_value = self._extract(field, raw_body, content_type)
-        if raw_value is None:
-            raise ParserError("external_ref not found in cancellation email")
-        try:
-            return str(_apply_transform(raw_value, field.transform))
-        except ValueError as exc:
-            raise ParserError(f"could not apply transform {field.transform.value!r} to {raw_value!r}: {exc}") from exc
-
     def parse(self, raw_subject: str, raw_body: str, content_type: str) -> ParsedReservation:
         values: dict[str, object] = {}
         for field in self._mapping.fields:

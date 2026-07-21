@@ -208,19 +208,57 @@ async def test_process_email_auto_print_skips_when_station_inactive(db_session: 
     assert len(reservations) == 1
 
 
+CANCELLATION_SUBJECT = "cancelled reservation via Booking.com"
+
+
+def _cancellation_body(ref: str, guest_name: str = "Milivojevic Danijela") -> str:
+    return (
+        f"Booking nr. {ref} (6749156809)\n"
+        f"Made by {guest_name} on 2026-06-16 00:17:25\n"
+        "---\n"
+        f"{guest_name}\n"
+        "---\n"
+        "Arrival: 2026-08-09\n"
+        "Departure: 2026-08-13\n"
+        "Price: 0.00\n"
+    )
+
+
 async def _cancellation_mapping(db_session: AsyncSession) -> ParserFieldMapping:
+    """Mirrors a real Booking.com-via-Cubilis cancellation notice —
+    since apply_cancellation_email() now needs a *full* ParsedReservation
+    (to be able to create a new cancelled reservation when no existing
+    one matches), a cancellation profile needs the same required
+    fields as a reservation profile, not just external_ref."""
     mapping = ParserFieldMapping(
-        profile_slug="cubilis_cancellation",
+        profile_slug="booking_com_cancellation",
         match_subject_regex="cancelled",
         kind=ParserMappingKind.cancellation,
     )
     db_session.add(mapping)
     await db_session.flush()
-    db_session.add(
-        ParserFieldMappingField(
-            mapping_id=mapping.id, label="Reservation number", target_field="external_ref",
-            extraction_type=ExtractionType.regex, pattern=r"Booking (\d+) cancelled", transform=FieldTransform.strip,
-        )
+    db_session.add_all(
+        [
+            ParserFieldMappingField(
+                mapping_id=mapping.id, label="Booking nr.", target_field="external_ref",
+                extraction_type=ExtractionType.regex, pattern=r"Booking nr\.\s*(\d+)", transform=FieldTransform.strip,
+            ),
+            ParserFieldMappingField(
+                mapping_id=mapping.id, label="Guest", target_field="guest_name",
+                extraction_type=ExtractionType.regex, pattern=r"Made by (.+) on \d{4}-\d{2}-\d{2}",
+                transform=FieldTransform.strip,
+            ),
+            ParserFieldMappingField(
+                mapping_id=mapping.id, label="Arrival", target_field="checkin",
+                extraction_type=ExtractionType.regex, pattern=r"Arrival:\s*(\d{4}-\d{2}-\d{2})",
+                transform=FieldTransform.parse_date_iso,
+            ),
+            ParserFieldMappingField(
+                mapping_id=mapping.id, label="Departure", target_field="checkout",
+                extraction_type=ExtractionType.regex, pattern=r"Departure:\s*(\d{4}-\d{2}-\d{2})",
+                transform=FieldTransform.parse_date_iso,
+            ),
+        ]
     )
     await db_session.commit()
     await db_session.refresh(mapping, attribute_names=["fields"])
@@ -235,8 +273,8 @@ async def test_process_cancellation_email_marks_existing_reservation_cancelled(
     monkeypatch.setattr(email_ingest, "_mark_seen_sync", lambda conn, uid: None)
 
     reservation = Reservation(
-        guest_name="Jane Doe", source_channel="cubilis", external_ref="60484374",
-        checkin=date(2026, 8, 17), checkout=date(2026, 8, 21),
+        guest_name="Milivojevic Danijela", source_channel="booking_com", external_ref="59945958",
+        checkin=date(2026, 8, 9), checkout=date(2026, 8, 13),
         status=ReservationStatus.confirmed,
     )
     db_session.add(reservation)
@@ -245,7 +283,7 @@ async def test_process_cancellation_email_marks_existing_reservation_cancelled(
     mapping = await _cancellation_mapping(db_session)
     registry = ParserRegistry([GenericFieldMappingParser(mapping)])
     fetched = FetchedEmail(
-        uid=b"20", subject="Booking 60484374 cancelled", body="Booking 60484374 cancelled", content_type="text/plain"
+        uid=b"20", subject=CANCELLATION_SUBJECT, body=_cancellation_body("59945958"), content_type="text/plain"
     )
 
     await _process_email(db_session, registry, fetched, TEST_CONN_INFO)
@@ -263,23 +301,81 @@ async def test_process_cancellation_email_marks_existing_reservation_cancelled(
 
 
 @pytest.mark.asyncio
-async def test_process_cancellation_email_for_unknown_ref_is_left_unparsed(
+async def test_process_cancellation_email_for_unknown_ref_creates_new_cancelled_reservation(
     db_session: AsyncSession, monkeypatch
 ):
-    monkeypatch.setattr(email_ingest, "_mark_processed_sync", lambda conn, uid: None)
-    monkeypatch.setattr(email_ingest, "_mark_seen_sync", lambda conn, uid: None)
+    """If no reservation with that external_ref exists yet (e.g. the
+    original confirmation email was itself missed), the cancellation
+    email creates a new reservation from its own data instead of the
+    booking silently vanishing — already cancelled, never printed."""
+    calls = []
+    monkeypatch.setattr(email_ingest, "_mark_processed_sync", lambda conn, uid: calls.append(("processed", uid)))
+    monkeypatch.setattr(email_ingest, "_mark_seen_sync", lambda conn, uid: calls.append(("seen", uid)))
+
+    station = PrintStation(name="Front Desk", connection_type=StationConnectionType.usb_agent)
+    db_session.add(station)
+    await db_session.flush()
+    app_settings = await get_or_create_settings(db_session)
+    app_settings.auto_print_enabled = True
+    app_settings.auto_print_station_id = station.id
+    await db_session.commit()
 
     mapping = await _cancellation_mapping(db_session)
     registry = ParserRegistry([GenericFieldMappingParser(mapping)])
     fetched = FetchedEmail(
-        uid=b"21", subject="Booking 99999999 cancelled", body="Booking 99999999 cancelled", content_type="text/plain"
+        uid=b"21", subject=CANCELLATION_SUBJECT, body=_cancellation_body("99999999"), content_type="text/plain"
+    )
+
+    await _process_email(db_session, registry, fetched, TEST_CONN_INFO)
+
+    reservation = (await db_session.execute(select(Reservation))).scalars().one()
+    assert reservation.external_ref == "99999999"
+    assert reservation.status == ReservationStatus.cancelled
+    assert calls == [("processed", b"21")], "it's a successful match, not an unparsed failure"
+
+    # Never auto-printed, even though auto-print is enabled.
+    jobs = (await db_session.execute(select(PrintJob))).scalars().all()
+    assert jobs == []
+
+
+@pytest.mark.asyncio
+async def test_process_cancellation_email_missing_required_field_is_left_unparsed(
+    db_session: AsyncSession, monkeypatch
+):
+    """A cancellation profile missing a schema-required field mapping
+    (e.g. no checkout field at all) raises a plain pydantic
+    ValidationError from ParsedReservation.model_validate(), not a
+    ParserError — this must still be caught and recorded, not crash
+    the poller or leave the email stuck retrying forever."""
+    calls = []
+    monkeypatch.setattr(email_ingest, "_mark_processed_sync", lambda conn, uid: calls.append(("processed", uid)))
+    monkeypatch.setattr(email_ingest, "_mark_seen_sync", lambda conn, uid: calls.append(("seen", uid)))
+
+    mapping = ParserFieldMapping(
+        profile_slug="incomplete_cancellation", match_subject_regex="cancelled", kind=ParserMappingKind.cancellation
+    )
+    db_session.add(mapping)
+    await db_session.flush()
+    db_session.add(
+        ParserFieldMappingField(
+            mapping_id=mapping.id, label="Booking nr.", target_field="external_ref",
+            extraction_type=ExtractionType.regex, pattern=r"Booking nr\.\s*(\d+)", transform=FieldTransform.strip,
+        )
+    )
+    await db_session.commit()
+    await db_session.refresh(mapping, attribute_names=["fields"])
+
+    registry = ParserRegistry([GenericFieldMappingParser(mapping)])
+    fetched = FetchedEmail(
+        uid=b"22", subject=CANCELLATION_SUBJECT, body=_cancellation_body("11111111"), content_type="text/plain"
     )
 
     await _process_email(db_session, registry, fetched, TEST_CONN_INFO)
 
     assert (await db_session.execute(select(Reservation))).scalars().all() == []
+    assert calls == [("seen", b"22")], "must be marked seen so it doesn't retry forever"
     unparsed = (await db_session.execute(select(UnparsedEmail))).scalars().one()
-    assert "99999999" in unparsed.reason
+    assert "unexpected error" in unparsed.reason
 
 
 @pytest.mark.asyncio
