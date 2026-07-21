@@ -12,6 +12,11 @@ class ExtractionType(str, enum.Enum):
     xpath = "xpath"
 
 
+class ParserMappingKind(str, enum.Enum):
+    reservation = "reservation"  # creates a new Reservation from the parsed fields
+    cancellation = "cancellation"  # looks up an existing Reservation by external_ref and marks it cancelled
+
+
 class FieldTransform(str, enum.Enum):
     none = "none"
     strip = "strip"
@@ -30,6 +35,16 @@ class ParserFieldMapping(Base):
     profile_slug: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     match_subject_regex: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # "reservation" (default): a match creates a new Reservation.
+    # "cancellation": a match looks up the existing Reservation by the
+    # mapped external_ref field and marks it cancelled instead — for
+    # OTA "booking cancelled" notices, which reuse a similar template
+    # to the original confirmation email but must not become a
+    # duplicate new booking.
+    kind: Mapped[ParserMappingKind] = mapped_column(
+        Enum(ParserMappingKind, name="parser_mapping_kind"), default=ParserMappingKind.reservation
+    )
 
     # Optional: a single regex with named groups (?P<room_type>...),
     # (?P<price_total>...), (?P<price_per_night>...), (?P<nights>...) —

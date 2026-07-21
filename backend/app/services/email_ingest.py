@@ -217,6 +217,33 @@ async def create_reservation_from_parsed(
     return reservation
 
 
+async def apply_cancellation_email(
+    db: AsyncSession, parser: GenericFieldMappingParser, subject: str, body: str, content_type: str
+) -> Reservation:
+    """For a `kind="cancellation"` parser match: extracts the
+    reservation reference and marks the existing Reservation cancelled
+    instead of creating a new one — an OTA "booking cancelled" notice
+    often reuses a template very similar to the original confirmation
+    email, so treating every match as a new booking would silently
+    create a duplicate reservation instead of cancelling the real one.
+    Raises ParserError (handled the same way as any other parse
+    failure — left as an unparsed email for manual follow-up) if the
+    reference can't be extracted or doesn't match any known
+    reservation."""
+    external_ref = parser.extract_cancellation_ref(body, content_type)
+    reservation = (
+        await db.execute(
+            select(Reservation)
+            .where(Reservation.external_ref == external_ref, Reservation.status != ReservationStatus.cancelled)
+            .order_by(Reservation.created_at.desc())
+        )
+    ).scalars().first()
+    if reservation is None:
+        raise ParserError(f"cancellation email for unknown reservation ref {external_ref!r}")
+    reservation.status = ReservationStatus.cancelled
+    return reservation
+
+
 async def _record_unparsed(
     db: AsyncSession, fetched: FetchedEmail, reason: str, parser_slug: str | None
 ) -> UnparsedEmail:
@@ -256,8 +283,16 @@ async def _process_email(
         await loop.run_in_executor(None, _mark_seen_sync, conn_info, fetched.uid)
         return
 
+    is_cancellation = getattr(parser, "kind", "reservation") == "cancellation"
+
     try:
-        parsed = parser.parse(fetched.subject, fetched.body, fetched.content_type)
+        if is_cancellation:
+            reservation = await apply_cancellation_email(
+                db, parser, fetched.subject, fetched.body, fetched.content_type
+            )
+        else:
+            parsed = parser.parse(fetched.subject, fetched.body, fetched.content_type)
+            reservation = await create_reservation_from_parsed(db, parsed, parser.slug, fetched.body)
     except ParserError as exc:
         await _record_unparsed(db, fetched, reason=str(exc), parser_slug=parser.slug)
         await db.commit()
@@ -265,18 +300,18 @@ async def _process_email(
         await loop.run_in_executor(None, _mark_seen_sync, conn_info, fetched.uid)
         return
 
-    reservation = await create_reservation_from_parsed(db, parsed, parser.slug, fetched.body)
     await audit.log(
         db,
         actor="system",
-        action="reservation.ingested",
+        action="reservation.cancelled_by_email" if is_cancellation else "reservation.ingested",
         entity_type="reservation",
         entity_id=reservation.id,
         detail={"parser_slug": parser.slug, "subject": fetched.subject},
     )
     await db.commit()
 
-    await maybe_auto_print(db, reservation)
+    if not is_cancellation:
+        await maybe_auto_print(db, reservation)
 
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, _mark_processed_sync, conn_info, fetched.uid)

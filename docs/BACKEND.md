@@ -174,6 +174,21 @@ To add support for a new email format:
    email body and confirm extraction before relying on it for real
    mail — this doesn't persist anything, it's a dry run.
 
+### Cancellation notices
+
+A profile has a **Kind**: `reservation` (default — a match creates a
+new booking) or `cancellation`. Use `cancellation` for an OTA's
+"booking cancelled" email, which often reuses a template very similar
+to the original confirmation — routing it through a normal
+`reservation` profile would silently create a duplicate booking
+instead of cancelling the real one. A cancellation profile only needs
+one field mapped: whichever one targets `external_ref`, used to look
+up the existing `Reservation` by that reference and mark it
+`cancelled`. Other mapped fields on a cancellation profile are
+ignored. If the reference doesn't match any known reservation (or
+can't be extracted), the email is left unparsed with a reason, same
+as any other parse failure — nothing is silently dropped.
+
 Emails that don't match any parser (or fail required-field
 extraction) are left in the mailbox marked `\Seen` (so they aren't
 reprocessed every poll), logged to the audit log with action
@@ -249,6 +264,19 @@ unless you capture `price_per_night` yourself).
   other manual reservation creation already used (`status=manual`).
   "Walk-in" is just a pre-filled shortcut (today's date, `walkin` as
   the source channel) — there's no separate walk-in status or table.
+- **Status changes**: a reservation's detail page has a "Change to"
+  status dropdown (any admin or reception session), including
+  cancelling it — this previously only existed as a raw API call
+  (`DELETE /api/v1/reservations/{id}`) with no UI. Once a reservation
+  is `cancelled`, an admin-role session also gets a **Delete
+  reservation** button that hard-deletes it — guarded server-side to
+  only ever delete a `cancelled` reservation, never an active one, so
+  it can't be used to silently remove a real booking.
+- **Cancellation via email**: see the "Cancellation notices" parser
+  guide above — an incoming email routed to a `cancellation`-kind
+  parser profile marks the matching reservation cancelled the same
+  way the manual status change does (`reservation.cancelled_by_email`
+  in the audit log instead of `reservation.status_changed`).
 - **Email source view**: a reservation's detail page renders its
   stored raw email in a sandboxed `<iframe>` (no scripts/forms/
   navigation — `sandbox=""`) when the stored source looks like an

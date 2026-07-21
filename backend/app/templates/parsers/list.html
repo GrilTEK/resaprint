@@ -5,17 +5,18 @@
 
 <div class="card">
   <table>
-    <thead><tr><th>Profile</th><th>Match subject</th><th>Fields</th><th>Active</th></tr></thead>
+    <thead><tr><th>Profile</th><th>Kind</th><th>Match subject</th><th>Fields</th><th>Active</th></tr></thead>
     <tbody>
       {% for m in mappings %}
       <tr>
         <td><a href="/parsers/{{ m.id }}">{{ m.profile_slug }}</a></td>
+        <td>{{ m.kind.value }}</td>
         <td>{{ m.match_subject_regex or "(always)" }}</td>
         <td>{{ m.fields|length }}</td>
         <td>{{ "yes" if m.is_active else "no" }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="4">No parser profiles yet. The built-in reference Booking.com parser always runs.</td></tr>
+      <tr><td colspan="5">No parser profiles yet. The built-in reference Booking.com parser always runs.</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -26,6 +27,13 @@
   <form hx-post="/parsers" hx-target="body">
     <div class="form-row"><label>Profile slug</label><input type="text" name="profile_slug" required></div>
     <div class="form-row"><label>Match subject regex (optional)</label><input type="text" name="match_subject_regex"></div>
+    <div class="form-row">
+      <label>Kind</label>
+      <select name="kind">
+        <option value="reservation">reservation (creates a booking)</option>
+        <option value="cancellation">cancellation (cancels an existing booking)</option>
+      </select>
+    </div>
     <button type="submit">Create</button>
   </form>
 </div>

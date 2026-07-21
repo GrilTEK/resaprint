@@ -15,6 +15,31 @@
   <div class="form-row"><label>Status</label><span class="badge badge-{{ reservation.status.value }}">{{ reservation.status.value }}</span></div>
 </div>
 
+<div class="card">
+  <h2>Status</h2>
+  <form hx-post="/reservations/{{ reservation.id }}/status" hx-target="body">
+    <div class="form-row">
+      <label>Change to</label>
+      <select name="status">
+        {% for s in ["pending", "confirmed", "manual", "cancelled"] %}
+        <option value="{{ s }}" {% if reservation.status.value == s %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit">Update status</button>
+  </form>
+  {% if reservation.status.value == "cancelled" and admin.role.value == "admin" %}
+  <form
+    hx-post="/reservations/{{ reservation.id }}/delete"
+    hx-target="body"
+    hx-confirm="Permanently delete this cancelled reservation? This can't be undone."
+    style="margin-top: 0.5rem;"
+  >
+    <button type="submit" style="background: var(--danger); color: #fff;">Delete reservation</button>
+  </form>
+  {% endif %}
+</div>
+
 {% if reservation.room_lines %}
 <div class="card">
   <h2>Room lines</h2>

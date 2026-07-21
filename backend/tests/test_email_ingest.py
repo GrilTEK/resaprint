@@ -1,4 +1,5 @@
 import email
+from datetime import date
 from email.mime.text import MIMEText
 
 import pytest
@@ -6,14 +7,21 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit_log import AuditLog
+from app.models.parser_mapping import (
+    ExtractionType,
+    FieldTransform,
+    ParserFieldMapping,
+    ParserFieldMappingField,
+    ParserMappingKind,
+)
 from app.models.print_job import PrintJob
 from app.models.print_station import PrintStation, StationConnectionType
-from app.models.reservation import Reservation
+from app.models.reservation import Reservation, ReservationStatus
 from app.models.unparsed_email import UnparsedEmail, UnparsedEmailStatus
 from app.services import email_ingest
 from app.services.app_settings import get_or_create_settings
 from app.services.email_ingest import FetchedEmail, ImapConnectionInfo, _decode_subject, _extract_body, _process_email
-from app.services.parser_registry import ParserRegistry
+from app.services.parser_registry import GenericFieldMappingParser, ParserRegistry
 from app.services.parsers.reference_booking_com import ReferenceBookingComParser
 
 TEST_CONN_INFO = ImapConnectionInfo(
@@ -198,6 +206,80 @@ async def test_process_email_auto_print_skips_when_station_inactive(db_session: 
     # config should never block ingestion.
     reservations = (await db_session.execute(select(Reservation))).scalars().all()
     assert len(reservations) == 1
+
+
+async def _cancellation_mapping(db_session: AsyncSession) -> ParserFieldMapping:
+    mapping = ParserFieldMapping(
+        profile_slug="cubilis_cancellation",
+        match_subject_regex="cancelled",
+        kind=ParserMappingKind.cancellation,
+    )
+    db_session.add(mapping)
+    await db_session.flush()
+    db_session.add(
+        ParserFieldMappingField(
+            mapping_id=mapping.id, label="Reservation number", target_field="external_ref",
+            extraction_type=ExtractionType.regex, pattern=r"Booking (\d+) cancelled", transform=FieldTransform.strip,
+        )
+    )
+    await db_session.commit()
+    await db_session.refresh(mapping, attribute_names=["fields"])
+    return mapping
+
+
+@pytest.mark.asyncio
+async def test_process_cancellation_email_marks_existing_reservation_cancelled(
+    db_session: AsyncSession, monkeypatch
+):
+    monkeypatch.setattr(email_ingest, "_mark_processed_sync", lambda conn, uid: None)
+    monkeypatch.setattr(email_ingest, "_mark_seen_sync", lambda conn, uid: None)
+
+    reservation = Reservation(
+        guest_name="Jane Doe", source_channel="cubilis", external_ref="60484374",
+        checkin=date(2026, 8, 17), checkout=date(2026, 8, 21),
+        status=ReservationStatus.confirmed,
+    )
+    db_session.add(reservation)
+    await db_session.commit()
+
+    mapping = await _cancellation_mapping(db_session)
+    registry = ParserRegistry([GenericFieldMappingParser(mapping)])
+    fetched = FetchedEmail(
+        uid=b"20", subject="Booking 60484374 cancelled", body="Booking 60484374 cancelled", content_type="text/plain"
+    )
+
+    await _process_email(db_session, registry, fetched, TEST_CONN_INFO)
+
+    await db_session.refresh(reservation)
+    assert reservation.status == ReservationStatus.cancelled
+
+    reservations = (await db_session.execute(select(Reservation))).scalars().all()
+    assert len(reservations) == 1, "a cancellation email must not create a duplicate reservation"
+
+    audit_result = await db_session.execute(
+        select(AuditLog).where(AuditLog.action == "reservation.cancelled_by_email")
+    )
+    assert len(audit_result.scalars().all()) == 1
+
+
+@pytest.mark.asyncio
+async def test_process_cancellation_email_for_unknown_ref_is_left_unparsed(
+    db_session: AsyncSession, monkeypatch
+):
+    monkeypatch.setattr(email_ingest, "_mark_processed_sync", lambda conn, uid: None)
+    monkeypatch.setattr(email_ingest, "_mark_seen_sync", lambda conn, uid: None)
+
+    mapping = await _cancellation_mapping(db_session)
+    registry = ParserRegistry([GenericFieldMappingParser(mapping)])
+    fetched = FetchedEmail(
+        uid=b"21", subject="Booking 99999999 cancelled", body="Booking 99999999 cancelled", content_type="text/plain"
+    )
+
+    await _process_email(db_session, registry, fetched, TEST_CONN_INFO)
+
+    assert (await db_session.execute(select(Reservation))).scalars().all() == []
+    unparsed = (await db_session.execute(select(UnparsedEmail))).scalars().one()
+    assert "99999999" in unparsed.reason
 
 
 @pytest.mark.asyncio

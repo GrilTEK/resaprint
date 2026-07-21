@@ -13,7 +13,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Protocol
 
-from app.models.parser_mapping import ExtractionType, FieldTransform, ParserFieldMapping
+from app.models.parser_mapping import ExtractionType, FieldTransform, ParserFieldMapping, ParserMappingKind
 from app.schemas.parser import PARSED_RESERVATION_FIELDS, ParsedReservation, RoomLineDTO
 
 _ROOM_LINE_GROUP_TRANSFORMS: dict[str, FieldTransform] = {
@@ -72,6 +72,11 @@ class GenericFieldMappingParser:
 
     def __init__(self, mapping: ParserFieldMapping) -> None:
         self.slug = mapping.profile_slug
+        # mapping.kind is only guaranteed non-None once the column
+        # `default=` has actually been applied by a DB flush — a
+        # ParserFieldMapping built directly in Python (as many tests
+        # do, without persisting it) leaves it None until then.
+        self.kind = mapping.kind.value if mapping.kind is not None else ParserMappingKind.reservation.value
         self._mapping = mapping
 
     def can_parse(self, raw_subject: str, raw_body: str, content_type: str) -> bool:
@@ -79,6 +84,22 @@ class GenericFieldMappingParser:
         if not pattern:
             return True
         return re.search(pattern, raw_subject) is not None
+
+    def extract_cancellation_ref(self, raw_body: str, content_type: str) -> str:
+        """For a `kind="cancellation"` mapping: extract just the
+        reservation reference used to look up the existing Reservation
+        to cancel. The rest of the mapped fields (if any) are ignored —
+        a cancellation notice doesn't need a full ParsedReservation."""
+        field = next((f for f in self._mapping.fields if f.target_field == "external_ref"), None)
+        if field is None:
+            raise ParserError("cancellation parser has no external_ref field mapped")
+        raw_value = self._extract(field, raw_body, content_type)
+        if raw_value is None:
+            raise ParserError("external_ref not found in cancellation email")
+        try:
+            return str(_apply_transform(raw_value, field.transform))
+        except ValueError as exc:
+            raise ParserError(f"could not apply transform {field.transform.value!r} to {raw_value!r}: {exc}") from exc
 
     def parse(self, raw_subject: str, raw_body: str, content_type: str) -> ParsedReservation:
         values: dict[str, object] = {}

@@ -4,6 +4,28 @@
 <h1>{{ mapping.profile_slug }}</h1>
 
 <div class="card">
+  <h2>Kind</h2>
+  <p style="color: #666; font-size: 0.85rem;">
+    <strong>reservation</strong>: a match creates a new booking.
+    <strong>cancellation</strong>: a match looks up the existing
+    reservation by its mapped <code>external_ref</code> field and
+    marks it cancelled instead of creating a duplicate — use this for
+    an OTA's "booking cancelled" notice email. Only the field mapped
+    to <code>external_ref</code> matters for a cancellation profile;
+    other mapped fields are ignored.
+  </p>
+  <form hx-post="/parsers/{{ mapping.id }}/kind" hx-target="body">
+    <div class="form-row">
+      <select name="kind">
+        <option value="reservation" {{ "selected" if mapping.kind.value == "reservation" else "" }}>reservation (creates a booking)</option>
+        <option value="cancellation" {{ "selected" if mapping.kind.value == "cancellation" else "" }}>cancellation (cancels an existing booking)</option>
+      </select>
+    </div>
+    <button type="submit">Save</button>
+  </form>
+</div>
+
+<div class="card">
   <h2>Fields</h2>
   <table>
     <thead>

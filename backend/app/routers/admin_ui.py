@@ -18,6 +18,7 @@ from app.models.parser_mapping import (
     FieldTransform,
     ParserFieldMapping,
     ParserFieldMappingField,
+    ParserMappingKind,
 )
 from app.models.print_job import PrintJob
 from app.models.print_station import PrintStation, StationConnectionType
@@ -340,13 +341,7 @@ async def assign_and_print_action(
     return templates.TemplateResponse(request, "reservations/sheet.html", context)
 
 
-@router.get("/reservations/{reservation_id}")
-async def reservation_detail_page(
-    reservation_id: int,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    admin: AdminPin = Depends(require_admin_session_html),
-):
+async def _reservation_detail_context(db: AsyncSession, admin: AdminPin, reservation_id: int) -> dict:
     reservation = (
         await db.execute(
             select(Reservation)
@@ -360,9 +355,66 @@ async def reservation_detail_page(
     stations = (
         await db.execute(select(PrintStation).where(PrintStation.is_active.is_(True)).order_by(PrintStation.name))
     ).scalars().all()
-    return templates.TemplateResponse(
-        request, "reservations/detail.html", {"admin": admin, "reservation": reservation, "stations": stations}
-    )
+    return {"admin": admin, "reservation": reservation, "stations": stations}
+
+
+@router.get("/reservations/{reservation_id}")
+async def reservation_detail_page(
+    reservation_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_session_html),
+):
+    context = await _reservation_detail_context(db, admin, reservation_id)
+    return templates.TemplateResponse(request, "reservations/detail.html", context)
+
+
+@router.post("/reservations/{reservation_id}/status")
+async def update_reservation_status_action(
+    reservation_id: int,
+    request: Request,
+    status: str = Form(...),
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_session_html),
+):
+    reservation = await db.get(Reservation, reservation_id)
+    status_values = {s.value for s in ReservationStatus}
+    if reservation is not None and status in status_values and status != reservation.status.value:
+        old_status = reservation.status.value
+        reservation.status = ReservationStatus(status)
+        await audit.log(
+            db, actor=admin.label, action="reservation.status_changed", entity_type="reservation",
+            entity_id=reservation.id, detail={"from": old_status, "to": status},
+        )
+        await db.commit()
+
+    context = await _reservation_detail_context(db, admin, reservation_id)
+    return templates.TemplateResponse(request, "reservations/detail.html", context)
+
+
+@router.post("/reservations/{reservation_id}/delete")
+async def delete_reservation_action(
+    reservation_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_role_html),
+):
+    # Only a cancelled reservation can be hard-deleted — anything still
+    # active should be cancelled first (a deliberate, auditable step)
+    # rather than removed outright, so this is a server-side guard, not
+    # just a hidden button in the template.
+    reservation = await db.get(Reservation, reservation_id)
+    if reservation is not None and reservation.status == ReservationStatus.cancelled:
+        await audit.log(
+            db, actor=admin.label, action="reservation.deleted", entity_type="reservation", entity_id=reservation.id,
+            detail={"guest_name": reservation.guest_name, "external_ref": reservation.external_ref},
+        )
+        await db.delete(reservation)
+        await db.commit()
+        return RedirectResponse("/reservations", status_code=303)
+
+    context = await _reservation_detail_context(db, admin, reservation_id)
+    return templates.TemplateResponse(request, "reservations/detail.html", context)
 
 
 @router.post("/reservations/{reservation_id}/print")
@@ -524,10 +576,15 @@ async def create_parser_action(
     request: Request,
     profile_slug: str = Form(...),
     match_subject_regex: str = Form(default=""),
+    kind: str = Form(default=ParserMappingKind.reservation.value),
     db: AsyncSession = Depends(get_db),
     admin: AdminPin = Depends(require_admin_role_html),
 ):
-    mapping = ParserFieldMapping(profile_slug=profile_slug, match_subject_regex=match_subject_regex or None)
+    mapping = ParserFieldMapping(
+        profile_slug=profile_slug,
+        match_subject_regex=match_subject_regex or None,
+        kind=ParserMappingKind(kind) if kind in {k.value for k in ParserMappingKind} else ParserMappingKind.reservation,
+    )
     db.add(mapping)
     await db.flush()
     await audit.log(db, actor=admin.label, action="parser.created", entity_type="parser_field_mapping", entity_id=mapping.id)
@@ -563,6 +620,31 @@ async def parser_detail_page(
     db: AsyncSession = Depends(get_db),
     admin: AdminPin = Depends(require_admin_role_html),
 ):
+    mapping = await _mapping_or_404(db, mapping_id)
+    return templates.TemplateResponse(
+        request,
+        "parsers/_mapping_form.html",
+        {"admin": admin, "mapping": mapping, "target_fields": sorted(PARSED_RESERVATION_FIELDS)},
+    )
+
+
+@router.post("/parsers/{mapping_id}/kind")
+async def update_parser_kind_action(
+    mapping_id: int,
+    request: Request,
+    kind: str = Form(...),
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_role_html),
+):
+    mapping = await _mapping_or_404(db, mapping_id)
+    if kind in {k.value for k in ParserMappingKind}:
+        mapping.kind = ParserMappingKind(kind)
+        await audit.log(
+            db, actor=admin.label, action="parser.kind_updated",
+            entity_type="parser_field_mapping", entity_id=mapping.id, detail={"kind": kind},
+        )
+        await db.commit()
+
     mapping = await _mapping_or_404(db, mapping_id)
     return templates.TemplateResponse(
         request,
@@ -714,8 +796,12 @@ async def test_parser_action(
     result = {"matched": matched, "parsed": None, "error": None}
     if matched:
         try:
-            parsed = parser.parse(subject, body, "text/plain")
-            result["parsed"] = parsed.model_dump(mode="json")
+            if mapping.kind == ParserMappingKind.cancellation:
+                external_ref = parser.extract_cancellation_ref(body, "text/plain")
+                result["parsed"] = {"kind": "cancellation", "external_ref": external_ref}
+            else:
+                parsed = parser.parse(subject, body, "text/plain")
+                result["parsed"] = parsed.model_dump(mode="json")
         except Exception as exc:  # noqa: BLE001 — surfaced to the operator, not swallowed
             result["error"] = str(exc)
 
@@ -769,14 +855,19 @@ async def _reparse_unparsed_email(db: AsyncSession, admin: AdminPin, unparsed: U
     subject, body, content_type = unparsed.subject, unparsed.body, unparsed.content_type
     parser_slug: str | None = None
 
+    is_cancellation = False
     try:
         registry = await email_ingest.load_registry(db)
         parser = registry.find(subject, body, content_type)
         if parser is None:
             raise ParserError("no matching parser")
         parser_slug = parser.slug
-        parsed = parser.parse(subject, body, content_type)
-        reservation = await email_ingest.create_reservation_from_parsed(db, parsed, parser.slug, body)
+        is_cancellation = getattr(parser, "kind", "reservation") == "cancellation"
+        if is_cancellation:
+            reservation = await email_ingest.apply_cancellation_email(db, parser, subject, body, content_type)
+        else:
+            parsed = parser.parse(subject, body, content_type)
+            reservation = await email_ingest.create_reservation_from_parsed(db, parsed, parser.slug, body)
     except Exception as exc:  # noqa: BLE001 — surfaced to the operator, never a raw 500
         # A failure partway through (e.g. create_reservation_from_parsed
         # raising after a flush) leaves the session's transaction
@@ -802,7 +893,11 @@ async def _reparse_unparsed_email(db: AsyncSession, admin: AdminPin, unparsed: U
     unparsed.resolved_reservation_id = reservation.id
     unparsed.resolved_at = datetime.now(timezone.utc)
     await audit.log(
-        db, actor=admin_label, action="reservation.ingested", entity_type="reservation", entity_id=reservation.id,
+        db,
+        actor=admin_label,
+        action="reservation.cancelled_by_email" if is_cancellation else "reservation.ingested",
+        entity_type="reservation",
+        entity_id=reservation.id,
         detail={"parser_slug": parser_slug, "subject": subject, "via": "reparse"},
     )
     await audit.log(
@@ -810,7 +905,8 @@ async def _reparse_unparsed_email(db: AsyncSession, admin: AdminPin, unparsed: U
         detail={"reservation_id": reservation.id},
     )
     await db.flush()
-    await email_ingest.maybe_auto_print(db, reservation)
+    if not is_cancellation:
+        await email_ingest.maybe_auto_print(db, reservation)
 
 
 @router.post("/unparsed-emails/{unparsed_id}/reparse")
