@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}{% if walkin %}Walk-in{% else %}New reservation{% endif %} — ResaPrint{% endblock %}
+{% block content %}
+<h1>{% if walkin %}Walk-in reservation{% else %}New reservation{% endif %}</h1>
+
+<form method="post" action="/reservations/new" class="card">
+  <div class="form-row">
+    <label>Guest name</label>
+    <input type="text" name="guest_name" required autofocus>
+  </div>
+  <div class="form-row">
+    <label>Email</label>
+    <input type="email" name="guest_email">
+  </div>
+  <div class="form-row">
+    <label>Phone</label>
+    <input type="text" name="guest_phone">
+  </div>
+  <div class="form-row">
+    <label>Check-in</label>
+    <input type="date" name="checkin" value="{{ default_checkin }}" required>
+  </div>
+  <div class="form-row">
+    <label>Check-out</label>
+    <input type="date" name="checkout" value="{{ default_checkout }}" required>
+  </div>
+  <div class="form-row">
+    <label>Room type</label>
+    <input type="text" name="room_type" placeholder="e.g. Double Room">
+  </div>
+  <div class="form-row">
+    <label>Adults</label>
+    <input type="number" name="guests_adults" value="1" min="1">
+  </div>
+  <div class="form-row">
+    <label>Children</label>
+    <input type="number" name="guests_children" value="0" min="0">
+  </div>
+  <div class="form-row">
+    <label>Total price</label>
+    <input type="text" name="price_total" placeholder="e.g. 120.00">
+  </div>
+  <div class="form-row">
+    <label>Currency</label>
+    <input type="text" name="price_currency" value="EUR" maxlength="3">
+  </div>
+  <div class="form-row">
+    <label>Source channel</label>
+    <input type="text" name="source_channel" value="{% if walkin %}walkin{% else %}manual{% endif %}">
+  </div>
+  <div class="form-row">
+    <label>Reference #</label>
+    <input type="text" name="external_ref">
+  </div>
+  <button type="submit">Create reservation</button>
+</form>
+{% endblock %}

@@ -3,10 +3,38 @@
 {% block content %}
 <h1>Reservations</h1>
 
-<form method="get" action="/reservations" class="form-row" style="margin-bottom: 1rem;">
-  <input type="text" name="q" value="{{ q }}" placeholder="Search guest, email, phone, ref#, room type...">
-  <button type="submit">Search</button>
-  {% if q %}<a href="/reservations">Clear</a>{% endif %}
+<div class="card" style="display:flex; gap: 1rem; margin-bottom: 1rem;">
+  <a href="/reservations/new"><button type="button">New reservation</button></a>
+  <a href="/reservations/new?walkin=1"><button type="button" class="secondary">Walk-in</button></a>
+</div>
+
+<form method="get" action="/reservations" class="card" style="margin-bottom: 1rem;">
+  <div class="form-row">
+    <input type="text" name="q" value="{{ q }}" placeholder="Search guest, email, phone, ref#, room type...">
+  </div>
+  <div class="form-row">
+    <label>Status</label>
+    <select name="status">
+      <option value="">(any)</option>
+      {% for s in statuses %}
+      <option value="{{ s.value }}" {% if status == s.value %}selected{% endif %}>{{ s.value }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="form-row">
+    <label>Channel</label>
+    <input type="text" name="source_channel" value="{{ source_channel }}" placeholder="e.g. booking_com_cubilis, manual, walkin">
+  </div>
+  <div class="form-row">
+    <label>Check-in from</label>
+    <input type="date" name="checkin_from" value="{{ checkin_from or '' }}">
+  </div>
+  <div class="form-row">
+    <label>Check-in to</label>
+    <input type="date" name="checkin_to" value="{{ checkin_to or '' }}">
+  </div>
+  <button type="submit">Filter</button>
+  {% if q or status or source_channel or checkin_from or checkin_to %}<a href="/reservations">Clear</a>{% endif %}
 </form>
 
 <table>

@@ -58,8 +58,22 @@
   <div id="print-status"></div>
 </div>
 
+{% set is_html_source = reservation.raw_source_text and ("<html" in reservation.raw_source_text.lower() or "<!doctype html" in reservation.raw_source_text.lower()) %}
 <div class="card">
-  <h2>Raw email source</h2>
-  <pre>{{ reservation.raw_source_text or "(none — manually created)" }}</pre>
+  <h2>Email source</h2>
+  {% if not reservation.raw_source_text %}
+  <p>(none — manually created)</p>
+  {% elif is_html_source %}
+  <div id="email-rendered">
+    <iframe sandbox="" style="width:100%; min-height:500px; border:1px solid #ccc; background:#fff;" srcdoc="{{ reservation.raw_source_text }}"></iframe>
+    <button type="button" class="secondary" onclick="document.getElementById('email-rendered').style.display='none'; document.getElementById('email-raw').style.display='block';">View raw</button>
+  </div>
+  <div id="email-raw" style="display:none;">
+    <pre>{{ reservation.raw_source_text }}</pre>
+    <button type="button" class="secondary" onclick="document.getElementById('email-raw').style.display='none'; document.getElementById('email-rendered').style.display='block';">View rendered</button>
+  </div>
+  {% else %}
+  <pre>{{ reservation.raw_source_text }}</pre>
+  {% endif %}
 </div>
 {% endblock %}

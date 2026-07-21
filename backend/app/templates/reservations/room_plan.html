@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Plahta — ResaPrint{% endblock %}
+{% block content %}
+<h1>Plahta</h1>
+
+<div class="card" style="display:flex; align-items:center; gap: 1rem;">
+  <a href="/room-plan?start={{ prev_start }}&days={{ days }}">&laquo; Prejšnjih {{ days }} dni</a>
+  <form method="get" action="/room-plan" style="display:inline;">
+    <input type="date" name="start" value="{{ date_range[0] }}" onchange="this.form.submit()">
+    <input type="hidden" name="days" value="{{ days }}">
+  </form>
+  <a href="/room-plan?start={{ next_start }}&days={{ days }}">Naslednjih {{ days }} dni &raquo;</a>
+</div>
+
+<div class="card" style="overflow-x: auto;">
+  {% if not rooms %}
+  <p>Ni aktivnih sob — najprej dodaj sobe na strani <a href="/rooms">Rooms</a>.</p>
+  {% else %}
+  <table>
+    <thead>
+      <tr>
+        <th>Soba</th>
+        {% for d in date_range %}<th>{{ d.strftime("%d.%m") }}</th>{% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for room in rooms %}
+      <tr>
+        <td>{{ room.room_number }}<br><small>{{ room.category }}</small></td>
+        {% for d in date_range %}
+        {% set cell = grid.get(room.id, {}).get(d) %}
+        <td>
+          {% if cell %}<a href="/reservations/{{ cell[0] }}">{{ cell[1] }}</a>{% endif %}
+        </td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endblock %}

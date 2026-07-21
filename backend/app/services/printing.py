@@ -10,7 +10,7 @@ from app.config import settings
 from app.models.app_settings import AppSettings
 from app.models.print_job import PrintJob, PrintJobStatus
 from app.models.print_station import PrintStation, StationConnectionType
-from app.models.reservation import Reservation
+from app.models.reservation import Reservation, ReservationStatus
 from app.services.escpos_builder import ReceiptBuilder
 
 
@@ -37,6 +37,7 @@ def build_reservation_receipt(
     width = station.paper_width_cols
     nights = max((reservation.checkout - reservation.checkin).days, 0)
     guests = (reservation.guests_adults or 0) + (reservation.guests_children or 0)
+    is_cancelled = reservation.status == ReservationStatus.cancelled
 
     # app_settings is optional (defaults below) so existing callers/tests
     # that don't care about receipt layout customization keep working.
@@ -47,19 +48,35 @@ def build_reservation_receipt(
     show_guests = app_settings.receipt_show_guests if app_settings else True
     show_channel = app_settings.receipt_show_channel if app_settings else True
 
+    base_size = {"large": (2, 2), "xlarge": (3, 3)}.get(font_size, (1, 1))
+
     builder = ReceiptBuilder(codepage=station.codepage, bold_labels=bold_labels)
     builder.set_font(font)  # type: ignore[arg-type]
-    if font_size == "large":
-        builder.set_text_size(2, 2)
-    elif font_size == "xlarge":
-        builder.set_text_size(3, 3)
+    builder.set_text_size(*base_size)
 
     header = f"{reservation.source_channel.upper()} REZERVACIJA" if show_channel else "REZERVACIJA"
+    if is_cancelled:
+        header += " — PREKLICANO"
     builder.align_center().bold_line(header)
+
+    def _cancelled_banner() -> None:
+        # A word in the header title isn't enough on its own — cheap
+        # thermal printers, a torn-off top edge, or a distracted staff
+        # member skimming the receipt could all miss it. A large bold
+        # banner top and bottom makes "this reservation is cancelled"
+        # impossible to miss on the physical paper.
+        builder.set_text_size(3, 3)
+        builder.bold_line("*** PREKLICANO ***")
+        builder.set_text_size(*base_size)
+
+    if is_cancelled:
+        _cancelled_banner()
     builder.divider(width)
     builder.align_left()
 
     text_lines = [header]
+    if is_cancelled:
+        text_lines.append("*** PREKLICANO ***")
     builder.kv_line("Gost:", reservation.guest_name, width=width)
     text_lines.append(f"Gost: {reservation.guest_name}")
 
@@ -126,6 +143,11 @@ def build_reservation_receipt(
     text_lines.append(f"Reservation nr.: {reservation.external_ref or '-'}")
 
     builder.divider(width)
+    if is_cancelled:
+        builder.align_center()
+        _cancelled_banner()
+        builder.align_left()
+        text_lines.append("*** PREKLICANO ***")
     builder.line(f"Printed {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
     builder.feed(3).cut()
 

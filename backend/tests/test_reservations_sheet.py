@@ -28,6 +28,23 @@ async def test_sheet_page_lists_arrivals_for_date(authed_client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_sheet_page_excludes_cancelled_reservations(authed_client: AsyncClient):
+    """The arrivals sheet should only show confirmed arrivals — a
+    cancelled reservation shouldn't need a room prepped or a receipt
+    printed as part of the daily arrivals workflow. (It's still fully
+    visible/printable from the reservations list and its own detail
+    page — just not on this operational sheet.)"""
+    create_resp = await authed_client.post("/api/v1/reservations", json=RESERVATION_PAYLOAD)
+    reservation_id = create_resp.json()["id"]
+    await authed_client.delete(f"/api/v1/reservations/{reservation_id}")
+
+    response = await authed_client.get("/reservations/sheet", params={"date": "2026-10-01"})
+    assert response.status_code == 200
+    assert "Alice Example" not in response.text
+    assert "No arrivals" in response.text
+
+
+@pytest.mark.asyncio
 async def test_sheet_page_empty_for_other_date(authed_client: AsyncClient):
     await authed_client.post("/api/v1/reservations", json=RESERVATION_PAYLOAD)
 
@@ -76,3 +93,40 @@ async def test_reservations_search_page_filters(authed_client: AsyncClient):
     assert response.status_code == 200
     assert "Bob Builder" in response.text
     assert "Alice Example" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_reservations_page_filters_by_status(authed_client: AsyncClient):
+    create_resp = await authed_client.post(
+        "/api/v1/reservations", json={**RESERVATION_PAYLOAD, "guest_name": "Cancel Me"}
+    )
+    await authed_client.post("/api/v1/reservations", json={**RESERVATION_PAYLOAD, "guest_name": "Keep Me"})
+    await authed_client.delete(f"/api/v1/reservations/{create_resp.json()['id']}")
+
+    response = await authed_client.get("/reservations", params={"status": "cancelled"})
+    assert response.status_code == 200
+    assert "Cancel Me" in response.text
+    assert "Keep Me" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_reservations_page_filters_by_channel_and_checkin_range(authed_client: AsyncClient):
+    await authed_client.post(
+        "/api/v1/reservations",
+        json={**RESERVATION_PAYLOAD, "guest_name": "Channel A", "source_channel": "booking_com"},
+    )
+    await authed_client.post(
+        "/api/v1/reservations",
+        json={**RESERVATION_PAYLOAD, "guest_name": "Channel B", "source_channel": "walkin"},
+    )
+
+    response = await authed_client.get("/reservations", params={"source_channel": "walkin"})
+    assert response.status_code == 200
+    assert "Channel B" in response.text
+    assert "Channel A" not in response.text
+
+    out_of_range = await authed_client.get(
+        "/reservations", params={"checkin_from": "2026-11-01", "checkin_to": "2026-11-30"}
+    )
+    assert "Channel A" not in out_of_range.text
+    assert "Channel B" not in out_of_range.text

@@ -225,6 +225,36 @@ each room line plus the reservation's overall total and an "Avg/night"
 line (`price_total / nights`, computed — not re-extracted per line
 unless you capture `price_per_night` yourself).
 
+## Reservations UI
+
+- **Filters**: the `/reservations` list can be filtered by status,
+  source channel (substring match), and check-in date range, on top
+  of the existing free-text search (guest name/email/phone/ref#/room
+  type). All filters are query params, so a filtered view is a
+  shareable/bookmarkable URL.
+- **Arrivals sheet** (`/reservations/sheet`) stays focused on "who's
+  actually arriving today" — it excludes cancelled reservations, but
+  still includes manually-entered and walk-in reservations, so a
+  same-day walk-in still shows up for room assignment/printing.
+- **Plahta** (`/room-plan`) — a room-by-date grid: active rooms down
+  the left, dates across the top (default 14-day window, paginated
+  with prev/next), each occupied cell links to the reservation
+  occupying that room that day. Built from
+  `room_assignment.py::room_plan_grid`, which reads both assignment
+  paths (the reservation-level `assigned_room_id` and the per-room-line
+  one) once for the whole date range rather than querying per day.
+- **Manual / walk-in entry** (`/reservations/new`, also linked as
+  "New reservation" / "Walk-in" from the reservations list) — a plain
+  HTML form over the same `POST /api/v1/reservations` behavior every
+  other manual reservation creation already used (`status=manual`).
+  "Walk-in" is just a pre-filled shortcut (today's date, `walkin` as
+  the source channel) — there's no separate walk-in status or table.
+- **Email source view**: a reservation's detail page renders its
+  stored raw email in a sandboxed `<iframe>` (no scripts/forms/
+  navigation — `sandbox=""`) when the stored source looks like an
+  HTML document, with a "View raw" toggle to see the original text.
+  Plain-text sources render as before, with no toggle.
+
 ## Printing
 
 - **LAN ESC/POS**: create a `print_stations` row with
@@ -237,6 +267,18 @@ unless you capture `price_per_night` yourself).
   `connection_type=usb_agent`, then use **Pair** in the Stations page
   to generate a one-time API key for the Windows Agent (see
   [`CLIENT.md`](CLIENT.md)).
+- **Cancelled reservations**: a reservation cancelled via
+  `DELETE /api/v1/reservations/{id}` keeps its `status` as `cancelled`
+  rather than being deleted, so it stays visible (with a red
+  "cancelled" badge) on the reservations list and its own detail page
+  — where it can still be printed manually. The arrivals sheet
+  excludes cancelled reservations (it's an operational "who's arriving
+  today" view), so a cancelled booking won't show up there. Printing a
+  cancelled reservation adds "— PREKLICANO" to the receipt header plus
+  a large bold "*** PREKLICANO ***" banner at both the top and bottom
+  of the printed receipt (`printing.py::build_reservation_receipt`),
+  so it's unmistakable on the physical paper even if a printer doesn't
+  honor the large-text ESC/POS command.
 
 ## Running tests locally
 

@@ -11,7 +11,7 @@ is moved.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -138,6 +138,52 @@ async def rooms_occupied_on_date(db: AsyncSession, target_date: date) -> dict[in
     for room_id, guest_name in (await db.execute(room_line_query)).all():
         occupied[room_id] = guest_name
     return occupied
+
+
+async def room_plan_grid(
+    db: AsyncSession, start_date: date, end_date: date
+) -> dict[int, dict[date, tuple[int, str]]]:
+    """room_id -> {date: (reservation_id, guest_name)} for every day in
+    [start_date, end_date) the room is occupied — powers the "Plahta"
+    room-by-date grid view. Fetches each assignment path (the
+    reservation-level and the per-room-line assigned_room_id) once for
+    the whole range and expands into individual days in Python, rather
+    than one query per day."""
+    reservation_query = select(
+        Reservation.id, Reservation.assigned_room_id, Reservation.guest_name, Reservation.checkin, Reservation.checkout
+    ).where(
+        Reservation.assigned_room_id.is_not(None),
+        Reservation.status != ReservationStatus.cancelled,
+        Reservation.checkin < end_date,
+        Reservation.checkout > start_date,
+    )
+    room_line_query = (
+        select(
+            Reservation.id,
+            ReservationRoomLine.assigned_room_id,
+            Reservation.guest_name,
+            Reservation.checkin,
+            Reservation.checkout,
+        )
+        .join(Reservation, Reservation.id == ReservationRoomLine.reservation_id)
+        .where(
+            ReservationRoomLine.assigned_room_id.is_not(None),
+            Reservation.status != ReservationStatus.cancelled,
+            Reservation.checkin < end_date,
+            Reservation.checkout > start_date,
+        )
+    )
+
+    grid: dict[int, dict[date, tuple[int, str]]] = {}
+    rows = list((await db.execute(reservation_query)).all()) + list((await db.execute(room_line_query)).all())
+    for reservation_id, room_id, guest_name, checkin, checkout in rows:
+        day = max(checkin, start_date)
+        last_day = min(checkout, end_date)
+        while day < last_day:
+            grid.setdefault(room_id, {})[day] = (reservation_id, guest_name)
+            day += timedelta(days=1)
+
+    return grid
 
 
 async def reassign_rooms_for_reservation(db: AsyncSession, reservation: Reservation) -> None:

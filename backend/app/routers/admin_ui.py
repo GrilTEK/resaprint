@@ -1,7 +1,9 @@
 import secrets
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, Form, Query, Request
+from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from passlib.context import CryptContext
 from sqlalchemy import func, or_, select
@@ -30,7 +32,12 @@ from app.services.app_settings import get_or_create_settings
 from app.services.auth_service import hash_pin
 from app.services.crypto import encrypt
 from app.services.parser_registry import GenericFieldMappingParser, ParserError
-from app.services.room_assignment import reassign_rooms_for_reservation, rooms_occupied_on_date
+from app.services.room_assignment import (
+    assign_rooms_for_reservation,
+    reassign_rooms_for_reservation,
+    room_plan_grid,
+    rooms_occupied_on_date,
+)
 
 router = APIRouter(tags=["admin-ui"])
 templates = Jinja2Templates(directory="app/templates")
@@ -67,6 +74,10 @@ async def dashboard(
 async def reservations_page(
     request: Request,
     q: str = "",
+    status: str = "",
+    source_channel: str = "",
+    checkin_from: date | None = None,
+    checkin_to: date | None = None,
     db: AsyncSession = Depends(get_db),
     admin: AdminPin = Depends(require_admin_session_html),
 ):
@@ -82,9 +93,29 @@ async def reservations_page(
                 Reservation.room_type.ilike(like),
             )
         )
+    status_values = {s.value: s for s in ReservationStatus}
+    if status in status_values:
+        query = query.where(Reservation.status == status_values[status])
+    if source_channel:
+        query = query.where(Reservation.source_channel.ilike(f"%{source_channel}%"))
+    if checkin_from is not None:
+        query = query.where(Reservation.checkin >= checkin_from)
+    if checkin_to is not None:
+        query = query.where(Reservation.checkin <= checkin_to)
     reservations = (await db.execute(query)).scalars().all()
     return templates.TemplateResponse(
-        request, "reservations/list.html", {"admin": admin, "reservations": reservations, "q": q}
+        request,
+        "reservations/list.html",
+        {
+            "admin": admin,
+            "reservations": reservations,
+            "q": q,
+            "status": status,
+            "source_channel": source_channel,
+            "checkin_from": checkin_from,
+            "checkin_to": checkin_to,
+            "statuses": list(ReservationStatus),
+        },
     )
 
 
@@ -151,6 +182,109 @@ async def reservations_sheet_page(
 ):
     context = await _sheet_context(db, admin, sheet_date)
     return templates.TemplateResponse(request, "reservations/sheet.html", context)
+
+
+@router.get("/room-plan")
+async def room_plan_page(
+    request: Request,
+    start: date = Query(default_factory=date.today),
+    days: int = Query(default=14),
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_session_html),
+):
+    days = max(1, min(days, 60))
+    end = start + timedelta(days=days)
+    date_range = [start + timedelta(days=i) for i in range(days)]
+    rooms = (await db.execute(select(Room).where(Room.is_active.is_(True)).order_by(Room.room_number))).scalars().all()
+    grid = await room_plan_grid(db, start, end)
+    return templates.TemplateResponse(
+        request,
+        "reservations/room_plan.html",
+        {
+            "admin": admin,
+            "rooms": rooms,
+            "date_range": date_range,
+            "grid": grid,
+            "days": days,
+            "prev_start": start - timedelta(days=days),
+            "next_start": start + timedelta(days=days),
+        },
+    )
+
+
+@router.get("/reservations/new")
+async def new_reservation_page(
+    request: Request,
+    walkin: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_session_html),
+):
+    today = date.today()
+    return templates.TemplateResponse(
+        request,
+        "reservations/new.html",
+        {
+            "admin": admin,
+            "walkin": walkin,
+            "default_checkin": today,
+            "default_checkout": today + timedelta(days=1),
+        },
+    )
+
+
+@router.post("/reservations/new")
+async def create_reservation_action(
+    request: Request,
+    guest_name: str = Form(...),
+    source_channel: str = Form(default="manual"),
+    checkin: date = Form(...),
+    checkout: date = Form(...),
+    room_type: str = Form(default=""),
+    guests_adults: int = Form(default=1),
+    guests_children: int = Form(default=0),
+    price_total: str = Form(default=""),
+    price_currency: str = Form(default="EUR"),
+    guest_email: str = Form(default=""),
+    guest_phone: str = Form(default=""),
+    external_ref: str = Form(default=""),
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_session_html),
+):
+    try:
+        parsed_price = Decimal(price_total) if price_total.strip() else None
+    except InvalidOperation:
+        parsed_price = None
+
+    reservation = Reservation(
+        guest_name=guest_name,
+        source_channel=source_channel.strip() or "manual",
+        checkin=checkin,
+        checkout=checkout,
+        room_type=room_type.strip() or None,
+        guests_adults=guests_adults,
+        guests_children=guests_children,
+        price_total=parsed_price,
+        price_currency=price_currency,
+        guest_email=guest_email.strip() or None,
+        guest_phone=guest_phone.strip() or None,
+        external_ref=external_ref.strip() or None,
+        status=ReservationStatus.manual,
+    )
+    db.add(reservation)
+    await db.flush()
+    app_settings = await get_or_create_settings(db)
+    if app_settings.room_auto_assign_enabled:
+        await assign_rooms_for_reservation(db, reservation)
+    await audit.log(
+        db,
+        actor=admin.label,
+        action="reservation.created_manual",
+        entity_type="reservation",
+        entity_id=reservation.id,
+        detail={"source_channel": reservation.source_channel},
+    )
+    await db.commit()
+    return RedirectResponse(f"/reservations/{reservation.id}", status_code=303)
 
 
 @router.post("/reservations/{reservation_id}/assign-and-print")

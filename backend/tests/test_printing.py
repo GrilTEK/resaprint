@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from app.models.app_settings import AppSettings
 from app.models.print_station import PrintStation, StationConnectionType
-from app.models.reservation import Reservation
+from app.models.reservation import Reservation, ReservationStatus
 from app.models.reservation_room_line import ReservationRoomLine
 from app.models.room import Room
 from app.services.escpos_builder import bold
@@ -191,6 +191,26 @@ def test_receipt_shows_reservation_number_or_dash():
 
     text_summary_no_ref, _ = build_reservation_receipt(_reservation(external_ref=None), _station())
     assert "Reservation nr.: -" in text_summary_no_ref
+
+
+def test_receipt_marks_cancelled_reservation_prominently():
+    """A cancelled reservation must be unmistakable on the printed
+    paper, not just in the admin UI — the header, a large bold banner
+    (top and bottom), and the plain-text payload all call it out."""
+    from app.services.escpos_builder import text_size
+
+    reservation = _reservation(status=ReservationStatus.cancelled)
+    text_summary, escpos_bytes = build_reservation_receipt(reservation, _station())
+
+    assert "PREKLICANO" in text_summary.splitlines()[0]
+    assert text_summary.count("*** PREKLICANO ***") == 2
+    assert text_size(3, 3) in escpos_bytes
+
+
+def test_receipt_does_not_mark_active_reservation_as_cancelled():
+    text_summary, _ = build_reservation_receipt(_reservation(status=ReservationStatus.confirmed), _station())
+
+    assert "PREKLICANO" not in text_summary
 
 
 def test_receipt_wraps_long_room_names_on_narrow_paper():
