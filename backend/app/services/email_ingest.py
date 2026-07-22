@@ -231,16 +231,18 @@ async def apply_cancellation_email(
     same way a reservation-kind profile would (guest_name, checkin,
     checkout, external_ref, etc. must be mapped the same way), then:
 
-    - if a reservation with the same `external_ref` already exists,
-      marks *that* one cancelled instead of creating a duplicate — an
-      OTA "booking cancelled" notice often reuses a template very
-      similar to the original confirmation email;
+    - if a reservation with the same `external_ref` already exists
+      (cancelled or not), marks/keeps *that* one cancelled instead of
+      creating a duplicate — an OTA "booking cancelled" notice often
+      reuses a template very similar to the original confirmation
+      email, and OTAs frequently send more than one cancellation
+      notice for the same booking, so this must be idempotent: a
+      repeat cancellation email for an already-cancelled reservation
+      is a no-op, not a second phantom booking;
     - otherwise (the confirmation was never ingested — missed,
       arrived out of order, etc.) creates a new reservation from the
       cancellation email's own data, already `cancelled`, so the
-      booking still shows up somewhere instead of vanishing. It is
-      never auto-printed (the caller skips that for any cancellation
-      match, new record or not).
+      booking still shows up somewhere instead of vanishing.
 
     Raises ParserError (handled the same way as any other parse
     failure — left as an unparsed email for manual follow-up) if the
@@ -253,7 +255,7 @@ async def apply_cancellation_email(
     reservation = (
         await db.execute(
             select(Reservation)
-            .where(Reservation.external_ref == parsed.external_ref, Reservation.status != ReservationStatus.cancelled)
+            .where(Reservation.external_ref == parsed.external_ref)
             .order_by(Reservation.created_at.desc())
         )
     ).scalars().first()
@@ -342,8 +344,11 @@ async def _process_email(
     )
     await db.commit()
 
-    if not is_cancellation:
-        await maybe_auto_print(db, reservation)
+    # A cancellation match auto-prints too, same as a new booking —
+    # the receipt's "PREKLICANO" banner exists specifically so staff
+    # get an unmistakable physical notice the moment a booking is
+    # cancelled, not just a database row nobody looks at.
+    await maybe_auto_print(db, reservation)
 
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, _mark_processed_sync, conn_info, fetched.uid)

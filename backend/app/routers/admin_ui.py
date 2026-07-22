@@ -995,8 +995,10 @@ async def _reparse_unparsed_email(db: AsyncSession, admin: AdminPin, unparsed: U
         detail={"reservation_id": reservation.id},
     )
     await db.flush()
-    if not is_cancellation:
-        await email_ingest.maybe_auto_print(db, reservation)
+    # A cancellation match auto-prints too, same as a new booking —
+    # the receipt's "PREKLICANO" banner exists specifically so staff
+    # get an unmistakable physical notice as soon as it's resolved.
+    await email_ingest.maybe_auto_print(db, reservation)
 
 
 @router.post("/unparsed-emails/{unparsed_id}/reparse")

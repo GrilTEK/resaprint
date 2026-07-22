@@ -301,13 +301,49 @@ async def test_process_cancellation_email_marks_existing_reservation_cancelled(
 
 
 @pytest.mark.asyncio
+async def test_repeat_cancellation_email_for_already_cancelled_reservation_is_idempotent(
+    db_session: AsyncSession, monkeypatch
+):
+    """OTAs commonly send more than one cancellation notice for the
+    same booking. A second (or later) cancellation email for a
+    reservation that's already cancelled must be a no-op, not create a
+    duplicate phantom reservation with the same external_ref."""
+    monkeypatch.setattr(email_ingest, "_mark_processed_sync", lambda conn, uid: None)
+    monkeypatch.setattr(email_ingest, "_mark_seen_sync", lambda conn, uid: None)
+
+    reservation = Reservation(
+        guest_name="Milivojevic Danijela", source_channel="booking_com", external_ref="59945958",
+        checkin=date(2026, 8, 9), checkout=date(2026, 8, 13),
+        status=ReservationStatus.cancelled,
+    )
+    db_session.add(reservation)
+    await db_session.commit()
+    reservation_id = reservation.id
+
+    mapping = await _cancellation_mapping(db_session)
+    registry = ParserRegistry([GenericFieldMappingParser(mapping)])
+    fetched = FetchedEmail(
+        uid=b"25", subject=CANCELLATION_SUBJECT, body=_cancellation_body("59945958"), content_type="text/plain"
+    )
+
+    await _process_email(db_session, registry, fetched, TEST_CONN_INFO)
+
+    reservations = (await db_session.execute(select(Reservation))).scalars().all()
+    assert len(reservations) == 1, "a repeat cancellation email must not create a duplicate reservation"
+    assert reservations[0].id == reservation_id
+    assert reservations[0].status == ReservationStatus.cancelled
+
+
+@pytest.mark.asyncio
 async def test_process_cancellation_email_for_unknown_ref_creates_new_cancelled_reservation(
     db_session: AsyncSession, monkeypatch
 ):
     """If no reservation with that external_ref exists yet (e.g. the
     original confirmation email was itself missed), the cancellation
     email creates a new reservation from its own data instead of the
-    booking silently vanishing — already cancelled, never printed."""
+    booking silently vanishing — already cancelled, and still
+    auto-printed (with the receipt's cancelled banner) like any other
+    match, so staff get a physical notice."""
     calls = []
     monkeypatch.setattr(email_ingest, "_mark_processed_sync", lambda conn, uid: calls.append(("processed", uid)))
     monkeypatch.setattr(email_ingest, "_mark_seen_sync", lambda conn, uid: calls.append(("seen", uid)))
@@ -333,9 +369,9 @@ async def test_process_cancellation_email_for_unknown_ref_creates_new_cancelled_
     assert reservation.status == ReservationStatus.cancelled
     assert calls == [("processed", b"21")], "it's a successful match, not an unparsed failure"
 
-    # Never auto-printed, even though auto-print is enabled.
     jobs = (await db_session.execute(select(PrintJob))).scalars().all()
-    assert jobs == []
+    assert len(jobs) == 1
+    assert jobs[0].reservation_id == reservation.id
 
 
 @pytest.mark.asyncio
