@@ -34,7 +34,13 @@ async def test_reception_gets_403_on_admin_only_json_routes(reception_client: As
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("path", ["/stations", "/parsers", "/settings", "/audit-log", "/users"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/stations", "/parsers", "/settings", "/audit-log", "/users",
+        "/export", "/export/rooms.csv", "/export/database.zip",
+    ],
+)
 async def test_reception_redirected_away_from_admin_only_html_pages(reception_client: AsyncClient, path):
     response = await reception_client.get(path, follow_redirects=False)
     assert response.status_code == 303

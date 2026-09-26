@@ -2,8 +2,8 @@ import secrets
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
-from fastapi import APIRouter, Depends, Form, Query, Request
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from passlib.context import CryptContext
 from sqlalchemy import func, or_, select
@@ -28,7 +28,7 @@ from app.models.room import Room
 from app.models.unparsed_email import UnparsedEmail, UnparsedEmailStatus
 from app.schemas.config import config_out_from_row
 from app.schemas.parser import PARSED_RESERVATION_FIELDS
-from app.services import audit, email_ingest, printing
+from app.services import audit, csv_export, email_ingest, printing
 from app.services.app_settings import get_or_create_settings
 from app.services.auth_service import hash_pin
 from app.services.crypto import encrypt
@@ -1129,6 +1129,50 @@ async def settings_update_action(
     ).scalars().all()
     return templates.TemplateResponse(
         request, "settings.html", {"admin": admin, "config": _config_out(row), "stations": stations, "saved": True}
+    )
+
+
+@router.get("/export")
+async def export_page(
+    request: Request,
+    admin: AdminPin = Depends(require_admin_role_html),
+):
+    return templates.TemplateResponse(
+        request, "export.html", {"admin": admin, "tables": csv_export.EXPORT_TABLES}
+    )
+
+
+@router.get("/export/database.zip")
+async def export_database_zip(
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_role_html),
+):
+    content = await csv_export.export_all_tables_zip(db)
+    await audit.log(db, actor=admin.label, action="export.database", entity_type="database")
+    await db.commit()
+    return Response(
+        content=content,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="resaprint-export-{date.today().isoformat()}.zip"'},
+    )
+
+
+@router.get("/export/{table_slug}.csv")
+async def export_table_route(
+    table_slug: str,
+    db: AsyncSession = Depends(get_db),
+    admin: AdminPin = Depends(require_admin_role_html),
+):
+    try:
+        content = await csv_export.export_table_csv(db, table_slug)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="unknown export table")
+    await audit.log(db, actor=admin.label, action="export.table", entity_type=table_slug)
+    await db.commit()
+    return Response(
+        content=content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{table_slug}.csv"'},
     )
 
 
