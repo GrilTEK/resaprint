@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Export — ResaPrint{% endblock %}
+{% block content %}
+<h1>Export data</h1>
+
+<div class="card">
+  <h2>Full database export</h2>
+  <p style="color: #666; font-size: 0.85rem;">
+    Downloads every table below as a single ZIP of CSV files. Secrets
+    (PIN hashes, station API keys, the IMAP password) and raw email
+    payloads are never included.
+  </p>
+  <a href="/export/database.zip"><button type="button">Download database.zip</button></a>
+</div>
+
+<div class="card">
+  <h2>Individual tables</h2>
+  <table>
+    <thead><tr><th>Table</th><th></th></tr></thead>
+    <tbody>
+      {% for t in tables %}
+      <tr>
+        <td>{{ t.label }}</td>
+        <td><a href="/export/{{ t.slug }}.csv">Download CSV</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
